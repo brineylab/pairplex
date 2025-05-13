@@ -14,9 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with PairPlex.  If not, see <http://www.gnu.org/licenses/>.
 
-"""
-PairPlex: A tool for the analysis of pairwise cross-linking mass spectrometry data.
-"""
+
 
 from abutils.io import list_files, make_dir
 from abstar.preprocess import merging
@@ -26,6 +24,7 @@ from natsort import natsorted
 from pathlib import Path
 from typing import Set, Tuple
 import polars as pl
+import pandas as pd
 
 
 
@@ -112,35 +111,125 @@ def assign_bc_parallel(well: str = None,
                        threads: int = 10, 
                        output_folder: str = './pairplexed/',
                        temp_folder: str = '/tmp/',
+                       enforce_bc_whitelist: bool = True,
                        check_rc: bool = True, 
                        verbose: bool = False, 
                        debug: bool = False) -> str:
-    """ """
+    """
+    Process FASTQ chunks in parallel and merge output files.
+    Returns a dict with the well name and merged output file paths.
+    """
 
     barcodes = load_barcode_whitelist(barcodes_path)
-    chunk_out_paths = [Path(temp_folder) / (Path(c).stem + ".parquet") for c in chunks]
-    
+    chunk_out_paths = [Path(temp_folder) / Path(c).stem for c in chunks]
+
     with multiprocessing.Pool(threads) as pool:
-        pool.starmap(
+        results = pool.starmap(
             process_chunk,
-            [(chunk, barcodes, check_rc, outpath)
-             for chunk, outpath in zip(chunks, chunk_out_paths)]
+            [
+                (chunk, barcodes, check_rc, str(outpath), enforce_bc_whitelist)
+                for chunk, outpath in zip(chunks, chunk_out_paths)
+            ]
         )
 
-    df = pl.concat(chunk_out_paths)
+    # Collect outputs
+    match_csvs = [csv for csv, _ in results]
+    record_parquets = [pq for _, pq in results]
 
-    outpath = os.path.join(output_folder, '02_barcoded')
-    make_dir(outpath)
-    path = os.path.join(outpath, f"barcoded_{well}.parquet")
-    df.write_parquet(path, )
+    # Merge CSVs (matches)
+    match_df = pd.concat([
+        pd.read_csv(csv, header=None, names=["cell_barcode", "count"])
+        for csv in match_csvs
+    ])
+    merged_matches = match_df.groupby("cell_barcode", as_index=False)["count"].sum()
+
+    out_dir = os.path.join(output_folder, '02_barcoded')
+    make_dir(out_dir)
+
+    final_csv = os.path.join(out_dir, f"barcoded_{well}_matches.csv")
+    final_parquet = os.path.join(out_dir, f"barcoded_{well}_records.parquet")
+
+    merged_matches.to_csv(final_csv, index=False)
+
+    # Merge Parquet files (records)
+    df_records = pl.concat([pl.read_parquet(pq) for pq in record_parquets])
+    df_records.write_parquet(final_parquet)
+
+    return {well: {"matches": final_csv, "records": final_parquet}}
+
+
+def process_chunk(chunk, barcodes, check_rc, outpath, enforce_bc_whitelist):
+    """Process a chunk of fastq file to extract barcodes, UMIs and TSO sequences."""
     
-    return {well: path}
+    # The TSO sequence is defined as TTTCTTATATG{1,5} in the 5' end of the read (5'RACE protocol). Change sequence here if needed.
+    tso_re = re.compile(r"TTTCTTATATG{1,5}")
+    matches = Counter()
+    records = defaultdict(list)
+
+    with open(chunk, "r") as handle:
+        while True:
+            try:
+                header = next(handle).strip()[1:]   # remove the '@' at the beginning
+                seq = next(handle).strip()          # plain sequence
+                next(handle)                        # skip the '+' line
+                next(handle)                        # skip the quality line
+
+                for s in (seq, reverse_complement(seq)) if check_rc else (seq,):
+                    for i in range(0, len(s) - 40):
+                        segment = s[i:i+46]
+                        if len(segment) < 46:
+                            continue
+                        barcode = segment[:16]
+                        umi = segment[16:26]
+                        tail = segment[26:]
+
+                        # We first check that we have a match for the TSO
+                        m = tso_re.search(tail) # we're using search instead of match to allow for diffrent positions of the TSO
+
+                        if not m:
+                            continue
+                        tso = m.group(0)
+
+                        # Then, if enabled, we verify that the barcode is on the whitelist
+                        if enforce_bc_whitelist:
+                            if barcode not in barcodes:
+                                continue
+                        
+                        # If all concurs, we add the record to the matches and increment counters
+                        matches[barcode] += 1
+                        if barcode not in records:
+                            records[barcode] = []
+                        records[barcode].append({"UMI":umi,"TSO":tso,"seq_id":header,"sequence":seq})
+                        break  # stop once match is found for this orientation (don't do more positions)
+                    break  # stop once match is found for first orientation (don't do reverse complement)
+
+            except StopIteration:
+                break
+
+    matches_file, records_file = write_matches(matches, records, outpath)
+
+    return matches_file, records_file
 
 
-def process_chunk(chunk: str, barcodes: Set[str], check_rc: bool, outpath: str) -> None:
-    # To-do
-    return
+def write_matches(matches: Counter, records: dict, outpath: Path):
+    """Write the matches and records to csv and parquet files respectively"""
 
+    csv_file = outpath + "_matches.csv"
+    parquet_file = outpath + "_records.parquet"
+
+    df = pd.DataFrame(matches.items(), columns=["cell_barcode", "count"])
+    df.to_csv(csv_file, index=False, header=False)
+
+    flattened = [
+                {"barcode": barcode, **record}
+                    for barcode, recs in records.items()
+                    for record in recs
+                ]
+
+    df = pl.DataFrame(flattened)
+    df.write_parquet(parquet_file, )
+
+    return csv_file, parquet_file
 
 
 ######################################################
@@ -202,8 +291,8 @@ def main(sequencing_folder: str = "./",
     ########### Processing individual cells/droplets ###########
     
     for well in barcoded_wells:
-        df = pl.read_parquet(barcoded_wells[well])
-
+        df = pl.read_parquet(barcoded_wells[well]['records'])
+        break
     
     
-    return
+    return df
