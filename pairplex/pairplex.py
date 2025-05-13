@@ -505,7 +505,7 @@ def main(sequencing_folder: str = "./",
             if verbose or debug:
                 logger.info(f"Annotating {file} with AbStar...")
             abstar.run(
-                file=file,
+                sequences=file,
                 germline_database='human',
                 project_path=abstar_folder,
                 verbose=verbose,
