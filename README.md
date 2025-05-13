@@ -1,5 +1,5 @@
 # PairPlex
-Demultiplex single-cell antibody repertoires with precision and paired insight.
+Demultiplex single-cell antibody repertoires with precision and pairing.
 ---
 
 <img src="./pairplex/data/pairplex_logo.png" alt="PairPlex Logo" width="300" />
