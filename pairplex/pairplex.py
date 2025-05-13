@@ -19,6 +19,7 @@
 from abutils.io import list_files, make_dir, from_polars, to_fasta
 from abutils.tools import cluster
 from abutils import Sequence
+import abstar
 from abstar.preprocess import merging
 import re, os, subprocess, shutil, tempfile, sys, multiprocessing, logging, time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -221,8 +222,8 @@ def assign_bc_parallel(well: str = None,
     df_records.write_parquet(final_parquet)
 
     if logger:
-        logger.info(f"[{well}] Wrote merged match file → {final_csv}")
-        logger.info(f"[{well}] Wrote merged record file → {final_parquet}")
+        logger.debug(f"[{well}] Wrote merged match file → {final_csv}")
+        logger.debug(f"[{well}] Wrote merged record file → {final_parquet}")
         logger.debug(f"[{well}] Total barcodes: {len(merged_matches)} | Total records: {df_records.shape[0]}")
 
     time.sleep(1)  # Ensure all is done before removing files
@@ -344,7 +345,9 @@ def main(sequencing_folder: str = "./",
          verbose: bool = False,
          debug: bool = False
         ):
+    
     """PairPlex main routine"""
+
 
     ########### Pre-flight ##########
     make_dir(output_folder)
@@ -366,6 +369,7 @@ def main(sequencing_folder: str = "./",
         merged_files = merge(files=files, output_folder=output_folder, log_folder=log_folder, verbose=verbose, debug=debug)
     else:
         merged_files = files
+
 
         
     ########### Assigning barcodes in wells ###########
@@ -403,6 +407,9 @@ def main(sequencing_folder: str = "./",
         well_contigs = []
         well_metadata = []
 
+        cluster_folder = os.path.join(temp_folder, well)
+        make_dir(cluster_folder)
+
         df = pl.read_parquet(barcoded_wells[well]['records'])
         cells = df['barcode'].unique()
 
@@ -410,8 +417,9 @@ def main(sequencing_folder: str = "./",
             logger.info(f"[{well}] Found {len(cells)} cells")
 
         for cell in cells:
+
             sequence_bin = from_polars(df.filter(pl.col('barcode') == cell), id_key="seq_id", sequence_key="sequence")
-            chain_bins = cluster.cluster(sequence_bin, threshold=0.80, temp_dir=temp_folder, debug=False)
+            chain_bins = cluster.cluster(sequence_bin, threshold=0.80, temp_dir=cluster_folder, debug=False)
 
             if debug:
                 logger.debug(f"[{well}] Cell {cell} → {len(chain_bins)} clusters")
@@ -456,13 +464,19 @@ def main(sequencing_folder: str = "./",
                     "reads": chain_bin.size
                 })
 
+        if not debug:
+            # Clean up temporary files
+            shutil.rmtree(cluster_folder)
+
+
         # Save contigs
         contig_folder = os.path.join(output_folder, '03_contigs')
         make_dir(contig_folder)
         contig_path = os.path.join(contig_folder, f"{well}_contigs.fasta")
         to_fasta(sequences=well_contigs, fasta_file=contig_path)
         if verbose:
-            logger.info(f"[{well}] Saved {len(well_contigs)} contigs to {contig_path}")
+            logger.debug(f"[{well}] Saved {len(well_contigs)} contigs to {contig_path}")
+
 
         # Save metadata
         metadata_folder = os.path.join(output_folder, '04_metadata')
@@ -471,7 +485,44 @@ def main(sequencing_folder: str = "./",
         df_metadata = pd.DataFrame(well_metadata)
         df_metadata.to_csv(metadata_file, index=False)
         if verbose:
-            logger.info(f"[{well}] Metadata written to {metadata_file}")
+            logger.debug(f"[{well}] Metadata written to {metadata_file}")
 
-    
+
+    ########### Running AbStar ###########
+    logger.info("=== Running AbStar annotation ===")
+
+    # Pre-flight
+    abstar_folder = os.path.join(output_folder, '05_annotated')
+    make_dir(abstar_folder)
+
+    # Files
+    contig_fastas = list_files(contig_folder, recursive=True, extension="fasta")
+    logger.info(f"Found {len(contig_fastas)} contig FASTA files to annotate.")
+
+    # Run AbStar
+    for file in contig_fastas:
+        try:
+            if verbose or debug:
+                logger.info(f"Annotating {file} with AbStar...")
+            abstar.run(
+                file=file,
+                germline_database='human',
+                project_path=abstar_folder,
+                verbose=verbose,
+                debug=debug
+            )
+            if debug:
+                logger.debug(f"Finished annotation for {file}")
+        except Exception as e:
+            logger.error(f"AbStar failed on file {file}: {e}")
+            continue
+
+    logger.info("AbStar annotation completed.")
+
+
+    ########### Pairing chains ###########
+    logger.info("=== Pairing chains  ===")
+
+
+
     return
