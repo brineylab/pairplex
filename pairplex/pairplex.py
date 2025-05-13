@@ -18,7 +18,8 @@
 
 from abutils.io import list_files, make_dir
 from abstar.preprocess import merging
-import re, os, subprocess, shutil, tempfile, sys, multiprocessing
+import re, os, subprocess, shutil, tempfile, sys, multiprocessing, logging, time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from collections import defaultdict, Counter
 from natsort import natsorted
 from pathlib import Path
@@ -28,6 +29,36 @@ import pandas as pd
 
 
 
+def setup_logger(output_folder: str, debug: bool) -> logging.Logger:
+    """Set up a logger with proper formatting and both file and console handlers."""
+    
+    logger = logging.getLogger("PairPlex")
+    if debug:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
+
+    # Clear existing handlers
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    log_path = os.path.join(output_folder, "pairplex.log")
+    file_handler = logging.FileHandler(log_path)
+    file_handler.setLevel(logging.DEBUG)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    return logger
+
+
 def merge(files: list, output_folder: str, log_folder: str, verbose: bool, debug: bool) -> list:
     """Quick and dirty adapter to leverage merging wrapper from AbStar. Uses Fastp."""
     
@@ -35,12 +66,13 @@ def merge(files: list, output_folder: str, log_folder: str, verbose: bool, debug
     assert files != [], "List of files to merge is empty. Aborting"
 
     merge_dir = os.path.join(output_folder, '01_merged')
+    log = os.path.join(log_folder, 'merging')
     make_dir(merge_dir)
 
     merged_files = merging.merge_fastqs(files=files,
                                         output_directory=merge_dir,
                                         output_format='fastq',
-                                        log_directory=log_folder,
+                                        log_directory=log,
                                         schema= 'element',
                                         algo= 'fastp',
                                         binary_path= None,
@@ -55,7 +87,7 @@ def merge(files: list, output_folder: str, log_folder: str, verbose: bool, debug
                                         quality_cutoff= 20,
                                         interleaved= False,
                                         compress_output= False,
-                                        debug=debug,
+                                        debug=False,
                                         show_progress=verbose,)
     return merged_files
 
@@ -105,6 +137,7 @@ def split_fastq(input_file: str, output_dir: Path, lines_per_chunk: int = 400_00
     return sorted(str(f) for f in output_dir.glob("chunk_*.fastq"))
 
 
+
 def assign_bc_parallel(well: str = None,
                        chunks: list = [], 
                        barcodes_path: str = "./data/3M-5pgex-jan-2023.txt", 
@@ -115,28 +148,35 @@ def assign_bc_parallel(well: str = None,
                        check_rc: bool = True, 
                        verbose: bool = False, 
                        debug: bool = False) -> str:
-    """
-    Process FASTQ chunks in parallel and merge output files.
-    Returns a dict with the well name and merged output file paths.
-    """
+    global logger
 
+    if logger: logger.info(f"[{well}] Starting parallel assignment with {len(chunks)} chunks using {threads} threads.")
+    
     barcodes = load_barcode_whitelist(barcodes_path)
     chunk_out_paths = [Path(temp_folder) / Path(c).stem for c in chunks]
+    futures = []
 
-    with multiprocessing.Pool(threads) as pool:
-        results = pool.starmap(
-            process_chunk,
-            [
-                (chunk, barcodes, check_rc, str(outpath), enforce_bc_whitelist)
-                for chunk, outpath in zip(chunks, chunk_out_paths)
-            ]
-        )
+    # Submit all jobs to executor
+    with ProcessPoolExecutor(max_workers=threads) as executor:
+        for chunk, outpath in zip(chunks, chunk_out_paths):
+            futures.append(
+                executor.submit(process_chunk, chunk, barcodes, check_rc, str(outpath), enforce_bc_whitelist)
+            )
 
-    # Collect outputs
+        results = []
+        for future in as_completed(futures):
+            try:
+                results.append(future.result())
+            except Exception as e:
+                if logger:
+                    logger.error(f"[{well}] Error in process_chunk: {e}")
+                raise
+
     match_csvs = [csv for csv, _ in results]
     record_parquets = [pq for _, pq in results]
 
-    # Merge CSVs (matches)
+    if logger: logger.debug(f"[{well}] Merging {len(match_csvs)} match files and {len(record_parquets)} record files...")
+
     match_df = pd.concat([
         pd.read_csv(csv, header=None, names=["cell_barcode", "count"])
         for csv in match_csvs
@@ -151,11 +191,50 @@ def assign_bc_parallel(well: str = None,
 
     merged_matches.to_csv(final_csv, index=False)
 
-    # Merge Parquet files (records)
-    df_records = pl.concat([pl.read_parquet(pq) for pq in record_parquets])
+    dfs = []
+    for pq in record_parquets:
+        try:
+            df = pl.read_parquet(pq)
+            if df.shape[0] > 0:
+                dfs.append(df)
+            else:
+                if logger:
+                    logger.warning(f"[{well}] Skipped empty Parquet file: {pq}")
+        except Exception as e:
+            if logger:
+                logger.error(f"[{well}] Failed to read {pq}: {e}")
+
+    logger.debug(f"[{well}] Merging {len(dfs)} record files...")
+
+    if len(dfs) == 0:
+        if logger:
+            logger.warning(f"[{well}] No valid records found. Returning empty outputs.")
+        # Optionally write empty placeholders
+        empty_df = pl.DataFrame(schema={"barcode": pl.Utf8, "UMI": pl.Utf8, "TSO": pl.Utf8, "seq_id": pl.Utf8, "sequence": pl.Utf8})
+        empty_df.write_parquet(final_parquet)
+        pd.DataFrame(columns=["cell_barcode", "count"]).to_csv(final_csv, index=False)
+
+        return {well: {"matches": final_csv, "records": final_parquet}}
+
+    # If we got here, we have non-empty DataFrames to merge
+    df_records = pl.concat(dfs)
     df_records.write_parquet(final_parquet)
 
+    # Clean up temporary chunk files
+    for chunk in chunks:
+        try:
+            os.remove(chunk)
+        except Exception as e:
+            if logger:
+                logger.warning(f"[{well}] Failed to delete temp chunk {chunk}: {e}")
+
+    if logger:
+        logger.info(f"[{well}] Wrote merged match file → {final_csv}")
+        logger.info(f"[{well}] Wrote merged record file → {final_parquet}")
+        logger.debug(f"[{well}] Total barcodes: {len(merged_matches)} | Total records: {df_records.shape[0]}")
+
     return {well: {"matches": final_csv, "records": final_parquet}}
+
 
 
 def process_chunk(chunk, barcodes, check_rc, outpath, enforce_bc_whitelist):
@@ -206,28 +285,40 @@ def process_chunk(chunk, barcodes, check_rc, outpath, enforce_bc_whitelist):
             except StopIteration:
                 break
 
-    matches_file, records_file = write_matches(matches, records, outpath)
+    matches_file, records_file = write_matches(matches, records, Path(outpath))
 
     return matches_file, records_file
 
 
 def write_matches(matches: Counter, records: dict, outpath: Path):
-    """Write the matches and records to csv and parquet files respectively"""
+    """Write the matches and records to CSV and Parquet files respectively."""
 
-    csv_file = outpath + "_matches.csv"
-    parquet_file = outpath + "_records.parquet"
+    global logger
+
+    csv_file = Path(str(outpath) + "_matches.csv")
+    parquet_file = Path(str(outpath) + "_records.parquet")
+
+    if logger:
+        logger.debug(f"Writing matches to {csv_file}")
 
     df = pd.DataFrame(matches.items(), columns=["cell_barcode", "count"])
     df.to_csv(csv_file, index=False, header=False)
 
+    if logger:
+        logger.debug(f"Writing records to {parquet_file}")
+
     flattened = [
-                {"barcode": barcode, **record}
-                    for barcode, recs in records.items()
-                    for record in recs
-                ]
+        {"barcode": barcode, **record}
+        for barcode, recs in records.items()
+        for record in recs
+    ]
 
     df = pl.DataFrame(flattened)
-    df.write_parquet(parquet_file, )
+    df.write_parquet(parquet_file)
+
+    time.sleep(0.1)  # Ensure the file is written before returning
+    if logger:
+        logger.debug(f"Successfully finished writing matches and records")
 
     return csv_file, parquet_file
 
@@ -239,6 +330,7 @@ def write_matches(matches: Counter, records: dict, outpath: Path):
 def main(sequencing_folder: str = "./", 
          output_folder: str = "./pairplexed/",
          barcodes_path: str = "./data/3M-5pgex-jan-2023.txt",
+         enforce_bc_whitelist: bool = True,
          chunk_size: int = 100_000,
          threads: int = 32,
          verbose: bool = False,
@@ -252,6 +344,10 @@ def main(sequencing_folder: str = "./",
     log_folder = os.path.join(output_folder, '00_logs')
     make_dir(log_folder)
     make_dir(temp_folder)
+    global logger 
+    logger = setup_logger(log_folder, debug)
+    logger.info("=== Starting PairPlex pipeline ===")
+
 
     
     ########### Pre-processing data ###########
@@ -265,14 +361,14 @@ def main(sequencing_folder: str = "./",
 
         
     ########### Assigning barcodes in wells ###########
-    wells = list_wells(merged_files, )
+    wells = list_wells(merged_files, verbose=verbose, debug=debug)
     barcoded_wells = []
     
     for well in natsorted(wells):
-        fastq = merged_files[well]
+        fastq = wells[well]
         
         # First, we split into chunks to parallelize
-        fastq_chunks = split_fastq(input_file=fastq, output_dir=temp_folder, lines_per_chunk=4*chunk_size)
+        fastq_chunks = split_fastq(input_file=fastq, output_dir=Path(temp_folder), lines_per_chunk=4*chunk_size)
 
         # Then, we assign barcodes/UMI and TSO for every chunk and concatenate results in a single file
         barcoded = assign_bc_parallel(well=well,
@@ -281,6 +377,7 @@ def main(sequencing_folder: str = "./",
                                       threads=min(len(fastq_chunks), threads),
                                       output_folder=output_folder,
                                       temp_folder=temp_folder,
+                                      enforce_bc_whitelist=enforce_bc_whitelist,
                                       check_rc=True, 
                                       verbose=verbose, 
                                       debug=debug)
