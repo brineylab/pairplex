@@ -16,7 +16,9 @@
 
 
 
-from abutils.io import list_files, make_dir
+from abutils.io import list_files, make_dir, from_polars, to_fasta
+from abutils.tools import cluster
+from abutils import Sequence
 from abstar.preprocess import merging
 import re, os, subprocess, shutil, tempfile, sys, multiprocessing, logging, time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -95,6 +97,8 @@ def merge(files: list, output_folder: str, log_folder: str, verbose: bool, debug
 
 def list_wells(merged_files: list, verbose: bool, debug: bool) -> dict:
     """Match input files to wells (e.g., A1, B9) and return mapping."""
+    global logger
+
     well_to_files = {}
 
     for f in merged_files:
@@ -104,10 +108,11 @@ def list_wells(merged_files: list, verbose: bool, debug: bool) -> dict:
             well_to_files[well] = f
 
     if any([verbose, debug]):
+        logger.info(f"Found {len(well_to_files)} wells")
+    if debug:
         sorted_wells = natsorted(well_to_files)
-        print(f"Found {len(sorted_wells)} wells:")
-        for w in sorted_wells:
-            print(f"  {w} → {well_to_files[w]}")
+        for well in sorted_wells:
+            logger.debug(f"Well {well}: {well_to_files[well]}")        
 
     return well_to_files
 
@@ -138,6 +143,11 @@ def split_fastq(input_file: str, output_dir: Path, lines_per_chunk: int = 400_00
 
 
 
+def run_process_chunk(args):
+    return process_chunk(*args)
+
+
+
 def assign_bc_parallel(well: str = None,
                        chunks: list = [], 
                        barcodes_path: str = "./data/3M-5pgex-jan-2023.txt", 
@@ -154,24 +164,14 @@ def assign_bc_parallel(well: str = None,
     
     barcodes = load_barcode_whitelist(barcodes_path)
     chunk_out_paths = [Path(temp_folder) / Path(c).stem for c in chunks]
-    futures = []
 
-    # Submit all jobs to executor
-    with ProcessPoolExecutor(max_workers=threads) as executor:
-        for chunk, outpath in zip(chunks, chunk_out_paths):
-            futures.append(
-                executor.submit(process_chunk, chunk, barcodes, check_rc, str(outpath), enforce_bc_whitelist)
-            )
-
-        results = []
-        for future in as_completed(futures):
-            try:
-                results.append(future.result())
-            except Exception as e:
-                if logger:
-                    logger.error(f"[{well}] Error in process_chunk: {e}")
-                raise
-
+    # to be parallelized
+    results = []
+    for chunk, chun_ou_path in zip(chunks, chunk_out_paths):
+        results.append(
+            process_chunk(chunk, barcodes, check_rc, str(chun_ou_path), enforce_bc_whitelist)
+        )
+    
     match_csvs = [csv for csv, _ in results]
     record_parquets = [pq for _, pq in results]
 
@@ -220,20 +220,24 @@ def assign_bc_parallel(well: str = None,
     df_records = pl.concat(dfs)
     df_records.write_parquet(final_parquet)
 
-    # Clean up temporary chunk files
-    for chunk in chunks:
-        try:
-            os.remove(chunk)
-        except Exception as e:
-            if logger:
-                logger.warning(f"[{well}] Failed to delete temp chunk {chunk}: {e}")
-
     if logger:
         logger.info(f"[{well}] Wrote merged match file → {final_csv}")
         logger.info(f"[{well}] Wrote merged record file → {final_parquet}")
         logger.debug(f"[{well}] Total barcodes: {len(merged_matches)} | Total records: {df_records.shape[0]}")
 
-    return {well: {"matches": final_csv, "records": final_parquet}}
+    time.sleep(1)  # Ensure all is done before removing files
+
+    # Clean up temporary chunk files
+    for chunk in chunks:
+        os.remove(chunk)
+    for csv in match_csvs:
+        os.remove(csv)
+    for pq in record_parquets:
+        os.remove(pq)
+ 
+    time.sleep(1)  # Ensure all is done before returning
+
+    return {"matches": final_csv, "records": final_parquet}
 
 
 
@@ -248,10 +252,10 @@ def process_chunk(chunk, barcodes, check_rc, outpath, enforce_bc_whitelist):
     with open(chunk, "r") as handle:
         while True:
             try:
-                header = next(handle).strip()[1:]   # remove the '@' at the beginning
-                seq = next(handle).strip()          # plain sequence
-                next(handle)                        # skip the '+' line
-                next(handle)                        # skip the quality line
+                header = next(handle).strip()[1:].split(' ')[0]     # remove the '@' at the beginning and the trailing info 
+                seq = next(handle).strip()                          # plain sequence
+                next(handle)                                        # skip the '+' line
+                next(handle)                                        # skip the quality line
 
                 for s in (seq, reverse_complement(seq)) if check_rc else (seq,):
                     for i in range(0, len(s) - 40):
@@ -279,6 +283,7 @@ def process_chunk(chunk, barcodes, check_rc, outpath, enforce_bc_whitelist):
                         if barcode not in records:
                             records[barcode] = []
                         records[barcode].append({"UMI":umi,"TSO":tso,"seq_id":header,"sequence":seq})
+
                         break  # stop once match is found for this orientation (don't do more positions)
                     break  # stop once match is found for first orientation (don't do reverse complement)
 
@@ -333,6 +338,9 @@ def main(sequencing_folder: str = "./",
          enforce_bc_whitelist: bool = True,
          chunk_size: int = 100_000,
          threads: int = 32,
+         min_cluster_size: int = 3,
+         min_umi_count: int = 2,
+         consentroid: str = "consensus",
          verbose: bool = False,
          debug: bool = False
         ):
@@ -362,7 +370,7 @@ def main(sequencing_folder: str = "./",
         
     ########### Assigning barcodes in wells ###########
     wells = list_wells(merged_files, verbose=verbose, debug=debug)
-    barcoded_wells = []
+    barcoded_wells = {}
     
     for well in natsorted(wells):
         fastq = wells[well]
@@ -382,14 +390,88 @@ def main(sequencing_folder: str = "./",
                                       verbose=verbose, 
                                       debug=debug)
 
-        barcoded_wells.append(barcoded)
+        barcoded_wells[well] = barcoded
 
     
     ########### Processing individual cells/droplets ###########
-    
+    logger.info("=== Processing individual cells/droplets ===")
+
     for well in barcoded_wells:
+        if verbose or debug:
+            logger.info(f"[{well}] Processing cells from {barcoded_wells[well]['records']}")
+
+        well_contigs = []
+        well_metadata = []
+
         df = pl.read_parquet(barcoded_wells[well]['records'])
-        break
+        cells = df['barcode'].unique()
+
+        if verbose:
+            logger.info(f"[{well}] Found {len(cells)} cells")
+
+        for cell in cells:
+            sequence_bin = from_polars(df.filter(pl.col('barcode') == cell), id_key="seq_id", sequence_key="sequence")
+            chain_bins = cluster.cluster(sequence_bin, threshold=0.80, temp_dir=temp_folder, debug=False)
+
+            if debug:
+                logger.debug(f"[{well}] Cell {cell} → {len(chain_bins)} clusters")
+
+            for i, chain_bin in enumerate(chain_bins):
+                if chain_bin.size < min_cluster_size:
+                    if debug:
+                        logger.debug(f"[{well}] Skipping cluster {i} of cell {cell} (size={chain_bin.size})")
+                    continue
+
+                seq_ids = chain_bin.seq_ids
+                umi_count = (
+                    df.filter(
+                        (pl.col('barcode') == cell) & 
+                        (pl.col('seq_id').is_in(seq_ids))
+                    )
+                    .select('UMI')
+                    .unique()
+                    .height
+                )
+
+                if umi_count < min_umi_count:
+                    if debug:
+                        logger.debug(f"[{well}] Skipping cluster {i} of cell {cell} due to low UMI count ({umi_count})")
+                    continue
+
+                if consentroid == "consensus":
+                    sequence = chain_bin.make_consensus().sequence
+                    if debug:
+                        logger.debug(f"[{well}] Cell {cell}, cluster {i} → consensus built (UMIs={umi_count}, reads={chain_bin.size})")
+                elif consentroid == "centroid":
+                    sequence = chain_bin.centroid.sequence
+                    if debug:
+                        logger.debug(f"[{well}] Cell {cell}, cluster {i} → centroid selected (UMIs={umi_count}, reads={chain_bin.size})")
+
+                name = f"{cell}_contig-{i}"
+                chain = Sequence(sequence, id=name)
+                well_contigs.append(chain)
+                well_metadata.append({
+                    "sequence_id": name,
+                    "UMI_count": umi_count,
+                    "reads": chain_bin.size
+                })
+
+        # Save contigs
+        contig_folder = os.path.join(output_folder, '03_contigs')
+        make_dir(contig_folder)
+        contig_path = os.path.join(contig_folder, f"{well}_contigs.fasta")
+        to_fasta(sequences=well_contigs, fasta_file=contig_path)
+        if verbose:
+            logger.info(f"[{well}] Saved {len(well_contigs)} contigs to {contig_path}")
+
+        # Save metadata
+        metadata_folder = os.path.join(output_folder, '04_metadata')
+        make_dir(metadata_folder)
+        metadata_file = os.path.join(metadata_folder, f"{well}_metadata.csv")
+        df_metadata = pd.DataFrame(well_metadata)
+        df_metadata.to_csv(metadata_file, index=False)
+        if verbose:
+            logger.info(f"[{well}] Metadata written to {metadata_file}")
+
     
-    
-    return df
+    return
