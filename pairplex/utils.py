@@ -359,35 +359,30 @@ def process_chunk(chunk, barcodes_path, check_rc, outpath, enforce_bc_whitelist)
     matches = Counter()
     records = defaultdict(list)
 
-    while True:
-        try:
-            for seq in parse_fastx(chunk, ):
-                for s in (seq.sequence, reverse_complement(seq.sequence)) if check_rc else (seq.sequence,):
-                    # We first check that we have a match for the TSO
-                    m = tso_re.search(s) # we're using search instead of match to allow for diffrent positions of the TSO
+    for seq in parse_fastx(chunk, ):
+        for s in (seq.sequence, reverse_complement(seq.sequence)) if check_rc else (seq.sequence,):
+            # We first check that we have a match for the TSO
+            m = tso_re.search(s) # we're using search instead of match to allow for diffrent positions of the TSO
 
-                    if not m:
-                        continue
-                    tso = m.group(0)
-                    leader = s[:m.start()]
-                    barcode = leader[:-10]
-                    umi = leader[-10:]
+            if not m:
+                continue
+            tso = m.group(0)
+            leader = s[:m.start()]
+            barcode = leader[:-10]
+            umi = leader[-10:]
 
-                    # Then, if enabled, we verify that the barcode is on the whitelist
-                    if enforce_bc_whitelist:
-                        if barcode not in barcodes:
-                            continue
-                    
-                    # If all concurs, we add the record to the matches and increment counters
-                    matches[barcode] += 1
-                    if barcode not in records:
-                        records[barcode] = []
-                    records[barcode].append({"UMI":umi,"TSO":tso,"seq_id":seq.id,"sequence":seq.sequence})
+            # Then, if enabled, we verify that the barcode is on the whitelist
+            if enforce_bc_whitelist:
+                if barcode not in barcodes:
+                    continue
+            
+            # If all concurs, we add the record to the matches and increment counters
+            matches[barcode] += 1
+            if barcode not in records:
+                records[barcode] = []
+            records[barcode].append({"UMI":umi,"TSO":tso,"seq_id":seq.id,"sequence":seq.sequence})
 
-                    break  # stop once match is found for first orientation (don't do reverse complement)
-
-        except StopIteration:
-            break
+            break  # stop once match is found for first orientation (don't do reverse complement)
 
     matches_file, records_file = write_matches(matches, records, Path(outpath))
 
