@@ -93,7 +93,7 @@ def merge(files: list, output_folder: str, log_folder: str, schema: str, verbose
                                         interleaved= False,
                                         compress_output= False,
                                         debug=False,
-                                        show_progress=verbose,)
+                                        show_progress=debug,)
     return merged_files
 
 
@@ -164,7 +164,7 @@ def assign_bc_unparalleled(well: str = None,
         logger.error("No barcode file provided. Aborting.")
         raise AssertionError("No barcode file provided. Aborting.")
 
-    if logger: logger.info(f"[{well}] Starting single-thread assignment with {len(chunks)} chunks using 1 threads.")
+    if logger: logger.info(f"[{well}] Starting single-thread cell barcode assignment with {len(chunks)} chunks using 1 threads.")
     
     chunk_out_paths = [Path(temp_folder) / Path(c).stem for c in chunks]
 
@@ -268,7 +268,7 @@ def assign_bc_paralleled(well: str = None,
         logger.error("No barcode file provided. Aborting.")
         raise AssertionError("No barcode file provided. Aborting.")
 
-    logger.info(f"[{well}] Starting multi-threaded assignment with {len(chunks)} chunks using {threads} threads.")
+    logger.info(f"[{well}] Starting multi-threaded cell barcode assignment with {len(chunks)} chunks using {threads} threads.")
     
     chunk_out_paths = [
         Path(temp_folder) / f"{well}_chunk_{i:02d}"
