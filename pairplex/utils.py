@@ -20,6 +20,7 @@ from abutils.tools import cluster
 from abutils import Sequence
 from abstar.preprocess import merging
 import re, os, subprocess, logging, time, multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from collections import defaultdict, Counter
 from natsort import natsorted
 from pathlib import Path
@@ -270,9 +271,9 @@ def assign_bc_paralleled(well: str = None,
         for i, _ in enumerate(chunks, start=1)
     ]
 
-    # With multiprocessing.Pool, we can parallelize the processing of chunks
     results = []
-    with multiprocessing.Pool(threads) as pool:
+    # context = multiprocessing.get_context("spawn") # /!\ Make sure to use "spawn" when using polars 
+    with multiprocessing.Pool(threads, ) as pool:
         async_results = []
         for chunk, chunk_out_path in zip(chunks, chunk_out_paths):
             async_results.append(
@@ -281,21 +282,9 @@ def assign_bc_paralleled(well: str = None,
                     (chunk, barcodes_path, check_rc, str(chunk_out_path), enforce_bc_whitelist)
                 )
             )
-        for async_result in async_results:
-            results.append(async_result.get())
-    # Close the pool and wait for all tasks to complete
-    # pool.close()
-    # pool.join()
-    os.sync() # Force the OS to flush all file system buffers
-
-    # # This can also be done with starmap, but we need to pass the chunk_out_path as well
-    # args = [(chunk, barcodes_path, check_rc, str(chunk_out_path), enforce_bc_whitelist) for chunk, chunk_out_path in zip(chunks, chunk_out_paths)]
-    # with multiprocessing.Pool(threads) as pool:
-    #     results = pool.starmap(process_chunk, args)
+        results = [async_result.get() for async_result in async_results]
 
     logger.debug(f"[{well}] Finished processing all chunks.")
-
-    
 
     match_csvs = [csv for csv, _ in results]
     record_parquets = [pq for _, pq in results]
@@ -433,8 +422,12 @@ def write_matches(matches: Counter, records: dict, outpath: Path):
     if records == {}:
         if logger:
             logger.warning(f"No records found for {csv_file}. Returning empty Parquet file.")
-        empty_df = pl.DataFrame(schema={"barcode": pl.Utf8, "UMI": pl.Utf8, "TSO": pl.Utf8, "seq_id": pl.Utf8, "sequence": pl.Utf8})
-        empty_df.write_parquet(parquet_file)
+        ## /!\ use Polars only with 'spawn' context manager
+        # empty_df = pl.DataFrame(schema={"barcode": pl.Utf8, "UMI": pl.Utf8, "TSO": pl.Utf8, "seq_id": pl.Utf8, "sequence": pl.Utf8}) 
+        # empty_df.write_parquet(parquet_file)
+        ## /!\ use Pandas with 'fork' context manager (default)
+        empty_df = pd.DataFrame({"barcode": pd.Series(dtype="str"), "UMI": pd.Series(dtype="str"), "TSO": pd.Series(dtype="str"), "seq_id": pd.Series(dtype="str"), "sequence": pd.Series(dtype="str")})
+        empty_df.to_parquet(parquet_file, index=False)
         return csv_file, parquet_file
 
     if logger:
@@ -446,8 +439,12 @@ def write_matches(matches: Counter, records: dict, outpath: Path):
         for record in recs
     ]
 
-    df = pl.DataFrame(flattened)
-    df.write_parquet(parquet_file)
+    ## /!\ use Polars only with 'spawn' context manager
+    # df = pl.DataFrame(flattened) 
+    # df.write_parquet(parquet_file)
+    ## /!\ use Pandas with 'fork' context manager (default)
+    df = pd.DataFrame(flattened)
+    df.to_parquet(parquet_file, index=False)
 
     time.sleep(0.1)  # Ensure the file is written before returning
 
