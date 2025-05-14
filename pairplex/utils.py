@@ -141,7 +141,110 @@ def split_fastq(input_file: str, output_dir: Path, lines_per_chunk: int = 400_00
 
 
 
-def assign_bc_parallel(well: str = None,
+def assign_bc_unparalleled(well: str = None,
+                       chunks: list = [], 
+                       barcodes_path: str = None, 
+                       output_folder: str = './pairplexed/',
+                       temp_folder: str = '/tmp/',
+                       enforce_bc_whitelist: bool = True,
+                       check_rc: bool = True, 
+                       verbose: bool = False, 
+                       debug: bool = False) -> str:
+    global logger
+
+    if barcodes_path is None:
+        logger.error("No barcode file provided. Aborting.")
+        raise AssertionError("No barcode file provided. Aborting.")
+
+    if logger: logger.info(f"[{well}] Starting single-thread assignment with {len(chunks)} chunks using 1 threads.")
+    
+    chunk_out_paths = [Path(temp_folder) / Path(c).stem for c in chunks]
+
+    results = []
+    for chunk, chunk_out_path in zip(chunks, chunk_out_paths):
+        results.append(
+            process_chunk(chunk, barcodes_path, check_rc, str(chunk_out_path), enforce_bc_whitelist)
+        )
+    
+    match_csvs = [csv for csv, _ in results]
+    record_parquets = [pq for _, pq in results]
+
+    if logger: logger.debug(f"[{well}] Merging {len(match_csvs)} match files and {len(record_parquets)} record files...")
+
+    match_df = pd.concat([
+        pd.read_csv(csv, header=None, names=["cell_barcode", "count"])
+        for csv in match_csvs
+    ])
+    merged_matches = match_df.groupby("cell_barcode", as_index=False)["count"].sum()
+
+    out_dir = os.path.join(output_folder, '02_barcoded')
+    make_dir(out_dir)
+
+    final_csv = os.path.join(out_dir, f"barcoded_{well}_matches.csv")
+    final_parquet = os.path.join(out_dir, f"barcoded_{well}_records.parquet")
+
+    merged_matches.to_csv(final_csv, index=False)
+
+    dfs = []
+    for pq in record_parquets:
+        try:
+            df = pl.read_parquet(pq)
+            if df.shape[0] > 0:
+                dfs.append(df)
+            else:
+                if logger:
+                    logger.warning(f"[{well}] Skipped empty Parquet file: {pq}")
+        except Exception as e:
+            if logger:
+                logger.error(f"[{well}] Failed to read {pq}: {e}")
+
+    logger.debug(f"[{well}] Merging {len(dfs)} record files...")
+
+    if len(dfs) == 0:
+        if logger:
+            logger.warning(f"[{well}] No valid records found. Returning empty outputs.")
+        # Optionally write empty placeholders
+        empty_df = pl.DataFrame(schema={"barcode": pl.Utf8, "UMI": pl.Utf8, "TSO": pl.Utf8, "seq_id": pl.Utf8, "sequence": pl.Utf8})
+        empty_df.write_parquet(final_parquet)
+        pd.DataFrame(columns=["cell_barcode", "count"]).to_csv(final_csv, index=False)
+
+        return {well: {"matches": final_csv, "records": final_parquet}}
+
+    # If we got here, we have non-empty DataFrames to merge
+    df_records = pl.concat(dfs)
+    df_records.write_parquet(final_parquet)
+
+    if logger:
+        logger.debug(f"[{well}] Wrote merged match file → {final_csv}")
+        logger.debug(f"[{well}] Wrote merged record file → {final_parquet}")
+        logger.debug(f"[{well}] Total barcodes: {len(merged_matches)} | Total records: {df_records.shape[0]}")
+
+    time.sleep(1)  # Ensure all is done before removing files
+
+    # Clean up temporary chunk files
+    for chunk in chunks:
+        try:
+            os.remove(chunk)
+        except FileNotFoundError:
+            pass
+    for csv in match_csvs:
+        try:
+            os.remove(csv)
+        except FileNotFoundError:
+            pass
+    for pq in record_parquets:
+        try:
+            os.remove(pq)
+        except FileNotFoundError:
+            pass
+
+    time.sleep(1)  # Ensure all is done before returning
+
+    return {"matches": final_csv, "records": final_parquet}
+
+
+
+def assign_bc_paralleled(well: str = None,
                        chunks: list = [], 
                        barcodes_path: str = None, 
                        threads: int = 10, 
@@ -157,15 +260,15 @@ def assign_bc_parallel(well: str = None,
         logger.error("No barcode file provided. Aborting.")
         raise AssertionError("No barcode file provided. Aborting.")
 
-    if logger: logger.info(f"[{well}] Starting parallel assignment with {len(chunks)} chunks using {threads} threads.")
+    if logger: logger.info(f"[{well}] Starting multi-threaded assignment with {len(chunks)} chunks using {threads} threads.")
     
     chunk_out_paths = [Path(temp_folder) / Path(c).stem for c in chunks]
 
     # to be parallelized
     results = []
-    for chunk, chunk_ou_path in zip(chunks, chunk_out_paths):
+    for chunk, chunk_out_path in zip(chunks, chunk_out_paths):
         results.append(
-            process_chunk(chunk, barcodes_path, check_rc, str(chunk_ou_path), enforce_bc_whitelist)
+            process_chunk(chunk, barcodes_path, check_rc, str(chunk_out_path), enforce_bc_whitelist)
         )
     
     match_csvs = [csv for csv, _ in results]
@@ -259,7 +362,7 @@ def process_chunk(chunk, barcodes_path, check_rc, outpath, enforce_bc_whitelist)
     while True:
         try:
             for seq in parse_fastx(chunk, ):
-                for s in (seq.sequence, reverse_complement(seq.sequence)) if check_rc else (seq,):
+                for s in (seq.sequence, reverse_complement(seq.sequence)) if check_rc else (seq.sequence,):
                     # We first check that we have a match for the TSO
                     m = tso_re.search(s) # we're using search instead of match to allow for diffrent positions of the TSO
 
@@ -388,7 +491,7 @@ def get_barcode_file(name: str) -> str:
     if name == "5prime":
         return "./barcodes/3M-5pgex-jan-2023.txt"
     elif name == "3prime":
-        return "./barcodes/3M-3pgex-jan-2023.txt"
+        return "./barcodes/3M-3pgex-may-2023.txt"
     elif name == "v2":
         return "./barcodes/737K-august-2016.txt"
     else:

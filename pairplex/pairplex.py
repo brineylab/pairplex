@@ -50,7 +50,22 @@ def main(sequencing_folder: str = "./",
          debug: bool = False
         ):
     
-    """PairPlex main routine"""
+    """PairPlex: DemultiPLEXing and PAIRing BCR sequences from combinatorial single-cellRNA sequencing experiments.
+    Args:
+        sequencing_folder (str): Path to the folder containing the sequencing data.
+        output_folder (str): Path to the folder where the output will be saved.
+        barcodes (str): Name of the barcode file to use. Default is "5prime". Options are "5prime", "3prime", or 'v2'.
+        enforce_bc_whitelist (bool): Whether to enforce the barcode whitelist. Default is True.
+        sequencer (str): Sequencer type. Default is "element". Options are "element" or "illumina".
+        chunk_size (int): Number of reads per chunk for parallel processing. Default is 100_000.
+        threads (int): Number of threads to use for parallel processing. Default is 32.
+        min_cluster_size (int): Minimum number of reads to consider a cluster. Default is 3.
+        min_umi_count (int): Minimum UMI count to consider a chain as valid in a cluster. Default is 2.
+        consentroid (str): Type of consensus sequence to generate. Default is "consensus". Options are "consensus" or "centroid".
+        only_pairs (bool): Whether to only keep paired chains. Default is True.
+        verbose (bool): Whether to print verbose output. Default is False.
+        debug (bool): Whether to print debug output. Default is False.
+    """
 
 
     ###################### Pre-flight ######################
@@ -92,16 +107,27 @@ def main(sequencing_folder: str = "./",
         fastq_chunks = split_fastq(input_file=fastq, output_dir=Path(temp_folder), lines_per_chunk=4*chunk_size)
 
         # Then, we assign barcodes/UMI and TSO for every chunk and concatenate results in a single file
-        barcoded = assign_bc_parallel(well=well,
-                                      chunks=fastq_chunks, 
-                                      barcodes_path=barcodes_path, 
-                                      threads=min(len(fastq_chunks), threads),
-                                      output_folder=output_folder,
-                                      temp_folder=temp_folder,
-                                      enforce_bc_whitelist=enforce_bc_whitelist,
-                                      check_rc=True, 
-                                      verbose=verbose, 
-                                      debug=debug)
+        if threads > 1:
+            barcoded = assign_bc_paralleled(well=well,
+                                        chunks=fastq_chunks, 
+                                        barcodes_path=barcodes_path, 
+                                        threads=min(len(fastq_chunks), threads),
+                                        output_folder=output_folder,
+                                        temp_folder=temp_folder,
+                                        enforce_bc_whitelist=enforce_bc_whitelist,
+                                        check_rc=True, 
+                                        verbose=verbose, 
+                                        debug=debug)
+        else:
+            barcoded = assign_bc_unparalleled(well=well,
+                                        chunks=fastq_chunks, 
+                                        barcodes_path=barcodes_path, 
+                                        output_folder=output_folder,
+                                        temp_folder=temp_folder,
+                                        enforce_bc_whitelist=enforce_bc_whitelist,
+                                        check_rc=True, 
+                                        verbose=verbose, 
+                                        debug=debug)
 
         barcoded_wells[well] = barcoded
 
@@ -237,7 +263,7 @@ def main(sequencing_folder: str = "./",
                     chain1 = chain1[0]
                     chain2 = chain2[0]
                     
-                    pair = Pair()
+                    pair = Pair(sequences=[chain1, chain2], name=cell)
                     
 
             elif len(cell_df) > 2:
@@ -245,5 +271,11 @@ def main(sequencing_folder: str = "./",
                 # For now, we will just skip this cell
                 # To-do
                 pass
+
+
+    ###################### Final generation of output files ######################
+    logger.info("=== Generating final output  ===")
+
+
 
     return
