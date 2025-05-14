@@ -47,6 +47,7 @@ def main(sequencing_folder: str = "./",
          min_umi_count: int = 2,
          consentroid: str = "consensus",
          only_pairs: bool = True,
+         output_fmt: str = "tsv",
          verbose: bool = False,
          debug: bool = False
         ):
@@ -64,6 +65,7 @@ def main(sequencing_folder: str = "./",
         min_umi_count (int): Minimum UMI count to consider a chain as valid in a cluster. Default is 2.
         consentroid (str): Type of consensus sequence to generate. Default is "consensus". Options are "consensus" or "centroid".
         only_pairs (bool): Whether to only keep paired chains. Default is True.
+        output_fmt (str): Format of the output files. Default is "tsv". Options are "tsv" or "parquet".
         verbose (bool): Whether to print verbose output. Default is False.
         debug (bool): Whether to print debug output. Default is False.
     """
@@ -309,84 +311,90 @@ def main(sequencing_folder: str = "./",
     ###################### Pairing chains ######################
     logger.info("=== Pairing chains  ===")
 
+    # Create the pairs folder
     pairs_folder = os.path.join(output_folder, '06_pairs')
     make_dir(pairs_folder)
 
-    wells_metadata = list_files('./test/04_metadata/', recursive=True, extension="csv")
-    wells_metadata = [f for f in wells_metadata if 'checkpoint' not in f]
-    well_to_files = {}
-    for f in wells_metadata:
-        m = re.search(r'([A-H][0-9]{1,2})_metadata\.csv$', f)
-        if m:
-            well = m.group(1)
-            well_to_files[well] = f
+    # Check if step already done
+    if list_files(os.path.join(output_folder, '06_pairs'), recursive=True, extension="tsv") != []:
+        logger.info("Pairs already exist. Skipping pairing step.")
+        
+    else:
+        wells_metadata = list_files('./test/04_metadata/', recursive=True, extension="csv")
+        wells_metadata = [f for f in wells_metadata if 'checkpoint' not in f]
+        well_to_files = {}
+        for f in wells_metadata:
+            m = re.search(r'([A-H][0-9]{1,2})_metadata\.csv$', f)
+            if m:
+                well = m.group(1)
+                well_to_files[well] = f
 
-    for well in wells:
-        df = pl.read_csv(os.path.join(abstar_folder, 'airr', f"{well}_contigs.tsv"), separator="\t")
-        df = df.with_columns([
-            pl.col("sequence_id").map_elements(lambda x: x.split('_')[0]).alias("cell_barcode"),
-            pl.col("sequence_id").map_elements(lambda x: x.split('_')[1]).alias("contig_id"),
-        ])
+        for well in wells:
+            df = pl.read_csv(os.path.join(abstar_folder, 'airr', f"{well}_contigs.tsv"), separator="\t")
+            df = df.with_columns([
+                pl.col("sequence_id").map_elements(lambda x: x.split('_')[0]).alias("cell_barcode"),
+                pl.col("sequence_id").map_elements(lambda x: x.split('_')[1]).alias("contig_id"),
+            ])
 
-        cells = df['cell_barcode'].unique()
-        pair_dicts = []
+            cells = df['cell_barcode'].unique()
+            pair_dicts = []
 
-        for cell in tqdm(cells):
-            cell_df = df.filter(pl.col('cell_barcode') == cell)
-            
-            if len(cell_df) == 1:
-                # Only one contig, no pairing needed
-                if only_pairs:
-                    # If we only want pairs, we skip this cell
-                    continue
-                else:
+            for cell in tqdm(cells):
+                cell_df = df.filter(pl.col('cell_barcode') == cell)
+                
+                if len(cell_df) == 1:
+                    # Only one contig, no pairing needed
+                    if only_pairs:
+                        # If we only want pairs, we skip this cell
+                        continue
+                    else:
+                        # To-do
+                        pass
+
+                elif len(cell_df) == 2:
+                    # Two contigs, try to pair them
+                    chain1 = cell_df.filter(pl.col('locus') == 'IGH')
+                    chain2 = cell_df.filter(pl.col('locus') != 'IGH')
+                    
+                    if len(chain1) == 1 and len(chain2) == 1:
+                        # Pair the chains
+                        heavy = from_polars(chain1)[0]
+                        light = from_polars(chain2)[0]
+                        for k in [k for k in light.annotations.keys() if k.startswith("d")]:
+                            light.annotations.pop(k)
+                        
+                        # Gather the corresponding metadata
+                        heavy_umi, heavy_reads = pl.read_csv(well_to_files[well]).filter((pl.col("sequence_id") == heavy['sequence_id']))[["UMI_count",'reads']].row(0)
+                        light_umi, light_reads = pl.read_csv(well_to_files[well]).filter((pl.col("sequence_id") == light['sequence_id']))[["UMI_count",'reads']].row(0)
+
+                        # Prepare the dictionary for the pair
+                        pair_dict = {}
+                        pair_dict['index'] = cell
+                        for k, v in heavy.annotations.items():
+                            pair_dict[k+":1"] = v
+                        pair_dict['umi:1'] = heavy_umi
+                        pair_dict['reads:1'] = heavy_reads
+                        for k, v in light.annotations.items():
+                            pair_dict[k+":2"] = v
+                        pair_dict['umi:2'] = light_umi
+                        pair_dict['reads:2'] = light_reads
+
+                        pair_dicts.append(pair_dict)
+
+                elif len(cell_df) > 2:
+                    # More than two contigs (doublets? or secondary recombination). We need to figure out what to do in this case
+                    # For now, we will just skip this cell
                     # To-do
                     pass
 
-            elif len(cell_df) == 2:
-                # Two contigs, try to pair them
-                chain1 = cell_df.filter(pl.col('locus') == 'IGH')
-                chain2 = cell_df.filter(pl.col('locus') != 'IGH')
-                
-                if len(chain1) == 1 and len(chain2) == 1:
-                    # Pair the chains
-                    heavy = from_polars(chain1)[0]
-                    light = from_polars(chain2)[0]
-                    
-                    # pair = Pair(sequences=[chain1, chain2], name=cell)
-                    
-                    # Gather the corresponding metadata
-                    heavy_umi, heavy_reads = pl.read_csv(well_to_files[well]).filter((pl.col("sequence_id") == heavy['sequence_id']))[["UMI_count",'reads']].row(0)
-                    light_umi, light_reads = pl.read_csv(well_to_files[well]).filter((pl.col("sequence_id") == light['sequence_id']))[["UMI_count",'reads']].row(0)
+            well_pairs = pl.DataFrame(pair_dicts)
 
-                    # Prepare the dictionary for the pair
-                    pair_dict = {}
-                    pair_dict['index'] = cell
-                    for k, v in heavy.annotations.items():
-                        pair_dict[k+":1"] = v
-                    pair_dict['umi:1'] = heavy_umi
-                    pair_dict['reads:1'] = heavy_reads
-                    for k, v in light.annotations.items():
-                        pair_dict[k+":2"] = v
-                    pair_dict['umi:2'] = light_umi
-                    pair_dict['reads:2'] = light_reads
+            # Save pairs
+            pairs_path = os.path.join(pairs_folder, f"{well}_pairs.tsv")
+            well_pairs.write_csv(pairs_path, separator="\t")
 
-                    pair_dicts.append(pair_dict)
-
-            elif len(cell_df) > 2:
-                # More than two contigs (doublets? or secondary recombination). We need to figure out what to do in this case
-                # For now, we will just skip this cell
-                # To-do
-                pass
-
-        well_pairs = pl.DataFrame(pair_dicts)
-
-        # Save pairs
-        pairs_path = os.path.join(pairs_folder, f"{well}_pairs.tsv")
-        well_pairs.write_csv(pairs_path, separator="\t")
-
-        if verbose:
-            logger.debug(f"[{well}] Saved {len(well_pairs)} pairs to {pairs_path}")
+            if verbose:
+                logger.debug(f"[{well}] Saved {len(well_pairs)} pairs to {pairs_path}")
 
     ###################### Final generation of output files ######################
     logger.info("=== Generating final output  ===")
@@ -396,20 +404,26 @@ def main(sequencing_folder: str = "./",
     make_dir(final_output_folder)
 
     pair_files = list_files(pairs_folder, recursive=True, extension="tsv")
+    wells = [os.path.basename(f).split('_')[0] for f in pair_files]
 
     dfs = []
-    for file in pair_files:
+    for well, file in zip(wells, pair_files):
         _df = pl.read_csv(file, separator="\t")
         _df = _df.with_columns(pl.lit(well).alias("well"))
-        dfs.append(df)
+        dfs.append(_df)
 
     # Concatenate all dataframes
     final_df = pl.concat(dfs)
-    final_df.write_csv(os.path.join(final_output_folder, 'all_pairs.tsv'), separator="\t")
     total_pairs = final_df.shape[0]
 
-    if verbose:
-        logger.info(f"Saved {total_pairs} pairs to {os.path.join(final_output_folder, 'all_pairs.tsv')}")
+    if output_fmt == "parquet":
+        final_df.write_parquet(os.path.join(final_output_folder, 'all_pairs.parquet'))
+        if verbose:
+            logger.info(f"Saved {total_pairs} pairs to {os.path.join(final_output_folder, 'all_pairs.parquet')}")
+    else:
+        final_df.write_csv(os.path.join(final_output_folder, 'all_pairs.tsv'), separator="\t")
+        if verbose:
+            logger.info(f"Saved {total_pairs} pairs to {os.path.join(final_output_folder, 'all_pairs.tsv')}")
 
 
     return
