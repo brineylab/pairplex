@@ -104,14 +104,15 @@ def main(sequencing_folder: str = "./",
         fastq = wells[well]
         
         # First, we split into chunks to parallelize
-        fastq_chunks = split_fastq(input_file=fastq, output_dir=Path(temp_folder), lines_per_chunk=4*chunk_size)
+        fastq_chunks = split_fastq(prefix=well, input_file=fastq, output_dir=Path(temp_folder), lines_per_chunk=4*chunk_size)
 
         # Then, we assign barcodes/UMI and TSO for every chunk and concatenate results in a single file
         if threads > 1:
+            threads_to_use = min(threads, len(fastq_chunks))
             barcoded = assign_bc_paralleled(well=well,
                                         chunks=fastq_chunks, 
                                         barcodes_path=barcodes_path, 
-                                        threads=min(len(fastq_chunks), threads),
+                                        threads=threads_to_use,
                                         output_folder=output_folder,
                                         temp_folder=temp_folder,
                                         enforce_bc_whitelist=enforce_bc_whitelist,

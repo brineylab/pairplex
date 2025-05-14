@@ -19,7 +19,7 @@ from abutils.io import make_dir, from_polars, parse_fastx
 from abutils.tools import cluster
 from abutils import Sequence
 from abstar.preprocess import merging
-import re, os, subprocess, logging, time
+import re, os, subprocess, logging, time, multiprocessing
 from collections import defaultdict, Counter
 from natsort import natsorted
 from pathlib import Path
@@ -127,17 +127,20 @@ def load_barcode_whitelist(path: str) -> Set[str]:
         return set(line.strip() for line in f)
 
 
-def split_fastq(input_file: str, output_dir: Path, lines_per_chunk: int = 400_000) -> list[str]:
-    prefix = output_dir / "chunk_"
+def split_fastq(prefix: str, input_file: str, output_dir: Path, lines_per_chunk: int = 400_000) -> list[str]:
+    if prefix is None:
+        lead = output_dir / "chunk_"
+    else:
+        lead = output_dir / f"{prefix}_chunk_"
     subprocess.run([
         "split",
         "-l", str(lines_per_chunk),
         "--numeric-suffixes=1",
         "--additional-suffix=.fastq",
         input_file,
-        str(prefix)
+        str(lead)
     ], check=True)
-    return sorted(str(f) for f in output_dir.glob("chunk_*.fastq"))
+    return sorted(str(f) for f in output_dir.glob("*chunk_*.fastq"))
 
 
 
@@ -260,21 +263,44 @@ def assign_bc_paralleled(well: str = None,
         logger.error("No barcode file provided. Aborting.")
         raise AssertionError("No barcode file provided. Aborting.")
 
-    if logger: logger.info(f"[{well}] Starting multi-threaded assignment with {len(chunks)} chunks using {threads} threads.")
+    logger.info(f"[{well}] Starting multi-threaded assignment with {len(chunks)} chunks using {threads} threads.")
     
-    chunk_out_paths = [Path(temp_folder) / Path(c).stem for c in chunks]
+    chunk_out_paths = [
+        Path(temp_folder) / f"{well}_chunk_{i:02d}"
+        for i, _ in enumerate(chunks, start=1)
+    ]
 
-    # to be parallelized
+    # With multiprocessing.Pool, we can parallelize the processing of chunks
     results = []
-    for chunk, chunk_out_path in zip(chunks, chunk_out_paths):
-        results.append(
-            process_chunk(chunk, barcodes_path, check_rc, str(chunk_out_path), enforce_bc_whitelist)
-        )
+    with multiprocessing.Pool(threads) as pool:
+        async_results = []
+        for chunk, chunk_out_path in zip(chunks, chunk_out_paths):
+            async_results.append(
+                pool.apply_async(
+                    process_chunk,
+                    (chunk, barcodes_path, check_rc, str(chunk_out_path), enforce_bc_whitelist)
+                )
+            )
+        for async_result in async_results:
+            results.append(async_result.get())
+    # Close the pool and wait for all tasks to complete
+    # pool.close()
+    # pool.join()
+    os.sync() # Force the OS to flush all file system buffers
+
+    # # This can also be done with starmap, but we need to pass the chunk_out_path as well
+    # args = [(chunk, barcodes_path, check_rc, str(chunk_out_path), enforce_bc_whitelist) for chunk, chunk_out_path in zip(chunks, chunk_out_paths)]
+    # with multiprocessing.Pool(threads) as pool:
+    #     results = pool.starmap(process_chunk, args)
+
+    logger.debug(f"[{well}] Finished processing all chunks.")
+
     
+
     match_csvs = [csv for csv, _ in results]
     record_parquets = [pq for _, pq in results]
 
-    if logger: logger.debug(f"[{well}] Merging {len(match_csvs)} match files and {len(record_parquets)} record files...")
+    logger.debug(f"[{well}] Merging {len(match_csvs)} match files and {len(record_parquets)} record files...")
 
     match_df = pd.concat([
         pd.read_csv(csv, header=None, names=["cell_barcode", "count"])
@@ -389,57 +415,6 @@ def process_chunk(chunk, barcodes_path, check_rc, outpath, enforce_bc_whitelist)
     return matches_file, records_file
 
 
-# def process_chunk(chunk, barcodes_path, check_rc, outpath, enforce_bc_whitelist):
-#     """Process a chunk of fastq file to extract barcodes, UMIs and TSO sequences."""
-    
-#     barcodes = load_barcode_whitelist(barcodes_path)
-
-#     # The TSO sequence is defined as TTTCTTATATG{1,5} in the 5' end of the read (5'RACE protocol). Change sequence here if needed.
-#     tso_re = re.compile(r"TTTCTTATATG{1,5}")
-#     matches = Counter()
-#     records = defaultdict(list)
-
-#     with open(chunk, "r") as handle:
-#         while True:
-#             try:
-#                 header = next(handle).strip()[1:].split(' ')[0]     # remove the '@' at the beginning and the trailing info 
-#                 seq = next(handle).strip()                          # plain sequence
-#                 next(handle)                                        # skip the '+' line
-#                 next(handle)                                        # skip the quality line
-
-#                 for s in (seq, reverse_complement(seq)) if check_rc else (seq,):
-                    
-#                     # We first check that we have a match for the TSO
-#                     m = tso_re.search(s) # we're using search instead of match to allow for diffrent positions of the TSO
-
-#                     if not m:
-#                         continue
-#                     tso = m.group(0)
-#                     leader = s[:m.start()]
-#                     barcode = leader[:-10]
-#                     umi = leader[-10:]
-
-#                     # Then, if enabled, we verify that the barcode is on the whitelist
-#                     if enforce_bc_whitelist:
-#                         if barcode not in barcodes:
-#                             continue
-                    
-#                     # If all concurs, we add the record to the matches and increment counters
-#                     matches[barcode] += 1
-#                     if barcode not in records:
-#                         records[barcode] = []
-#                     records[barcode].append({"UMI":umi,"TSO":tso,"seq_id":header,"sequence":seq})
-
-#                     break  # stop once match is found for this orientation (don't do more positions)
-#                     break  # stop once match is found for first orientation (don't do reverse complement)
-
-#             except StopIteration:
-#                 break
-
-#     matches_file, records_file = write_matches(matches, records, Path(outpath))
-
-#     return matches_file, records_file
-
 
 def write_matches(matches: Counter, records: dict, outpath: Path):
     """Write the matches and records to CSV and Parquet files respectively."""
@@ -475,10 +450,12 @@ def write_matches(matches: Counter, records: dict, outpath: Path):
     df.write_parquet(parquet_file)
 
     time.sleep(0.1)  # Ensure the file is written before returning
+
     if logger:
         logger.debug(f"Successfully finished writing matches and records")
 
     return csv_file, parquet_file
+
 
 
 def get_barcode_file(name: str) -> str:
