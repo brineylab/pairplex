@@ -18,7 +18,7 @@
 
 from abutils.io import list_files, make_dir, from_polars, to_fasta
 from abutils.tools import cluster
-from abutils import Sequence
+from abutils import Sequence, Pair
 import abstar
 from abstar.preprocess import merging
 import re, os, subprocess, shutil, tempfile, sys, multiprocessing, logging, time
@@ -44,6 +44,7 @@ def main(sequencing_folder: str = "./",
          output_folder: str = "./pairplexed/",
          barcodes: str = "5prime",
          enforce_bc_whitelist: bool = True,
+         sequencer: str = "element",
          chunk_size: int = 100_000,
          threads: int = 32,
          min_cluster_size: int = 3,
@@ -73,7 +74,7 @@ def main(sequencing_folder: str = "./",
     files = [f for f in files if 'Unassigned' not in f]
     if any(("R2" in f) for f in files):
         # Paired-end sequencing, requires merging
-        merged_files = merge(files=files, output_folder=output_folder, log_folder=log_folder, verbose=verbose, debug=debug)
+        merged_files = merge(files=files, output_folder=output_folder, log_folder=log_folder, schema=sequencer, verbose=verbose, debug=debug)
     else:
         merged_files = files
 
@@ -130,52 +131,20 @@ def main(sequencing_folder: str = "./",
 
         # This needs to be parallelized
         for cell in cells:
-
-            sequence_bin = from_polars(df.filter(pl.col('barcode') == cell), id_key="seq_id", sequence_key="sequence")
-            chain_bins = cluster.cluster(sequence_bin, threshold=0.80, temp_dir=cluster_folder, debug=False)
-
-            if debug:
-                logger.debug(f"[{well}] Cell {cell} → {len(chain_bins)} clusters")
-
-            for i, chain_bin in enumerate(chain_bins):
-                if chain_bin.size < min_cluster_size:
-                    if debug:
-                        logger.debug(f"[{well}] Skipping cluster {i} of cell {cell} (size={chain_bin.size})")
-                    continue
-
-                seq_ids = chain_bin.seq_ids
-                umi_count = (
-                    df.filter(
-                        (pl.col('barcode') == cell) & 
-                        (pl.col('seq_id').is_in(seq_ids))
-                    )
-                    .select('UMI')
-                    .unique()
-                    .height
-                )
-
-                if umi_count < min_umi_count:
-                    if debug:
-                        logger.debug(f"[{well}] Skipping cluster {i} of cell {cell} due to low UMI count ({umi_count})")
-                    continue
-
-                if consentroid == "consensus":
-                    sequence = chain_bin.make_consensus().sequence
-                    if debug:
-                        logger.debug(f"[{well}] Cell {cell}, cluster {i} → consensus built (UMIs={umi_count}, reads={chain_bin.size})")
-                elif consentroid == "centroid":
-                    sequence = chain_bin.centroid.sequence
-                    if debug:
-                        logger.debug(f"[{well}] Cell {cell}, cluster {i} → centroid selected (UMIs={umi_count}, reads={chain_bin.size})")
-
-                name = f"{cell}_contig-{i}"
-                chain = Sequence(sequence, id=name)
-                well_contigs.append(chain)
-                well_metadata.append({
-                    "sequence_id": name,
-                    "UMI_count": umi_count,
-                    "reads": chain_bin.size
-                })
+            
+            sequence_bin = df.filter(pl.col('barcode') == cell)
+            results = process_cell(well=well,
+                                   cell=cell, 
+                                   sequence_bin=sequence_bin, 
+                                   cluster_folder=cluster_folder, 
+                                   clustering_threshold=0.8,
+                                   min_cluster_size=min_cluster_size, 
+                                   min_umi_count=min_umi_count, 
+                                   consentroid=consentroid, 
+                                   debug=debug)
+            
+            well_contigs.extend(results['contigs'])
+            well_metadata.extend(results['metadata'])
 
         if not debug:
             # Clean up temporary files
@@ -236,6 +205,42 @@ def main(sequencing_folder: str = "./",
     ###################### Pairing chains ######################
     logger.info("=== Pairing chains  ===")
 
+    pairs_folder = os.path.join(output_folder, '06_pairs')
+    make_dir(pairs_folder)
 
+    wells_metadata = list_files(metadata_folder, recursive=True, extension="csv")
+
+    for well in wells:
+        df = pl.read_csv(os.path.join(abstar_folder, 'airr', f"{well}_contigs.tsv"), sep="\t")
+        df = df.with_columns(
+            (pl.col('sequence_id').str.split('_')[0].alias('cell_barcode')),
+            (pl.col('sequence_id').str.split('_')[1].alias('contig_id')),
+        )
+
+        cells = df['cell_barcode'].unique()
+
+        for cell in cells:
+            cell_df = df.filter(pl.col('cell_barcode') == cell)
+            
+            if len(cell_df) == 1:
+                # Only one contig, no pairing needed
+                continue
+            elif len(cell_df) == 2:
+                # Two contigs, pair them
+                chain1 = cell_df.filter(pl.col('locus') == 'IGH')
+                chain2 = cell_df.filter(pl.col('chain') != 'IGH')
+                
+                if len(chain1) == 1 and len(chain2) == 1:
+                    # Pair the chains
+                    chain1 = chain1[0]
+                    chain2 = chain2[0]
+                    
+                    pair = Pair()
+                    
+
+            elif len(cell_df) > 2:
+                # More than two contigs (doublets? or secondary recombination). We need to figure out what to do in this case
+                # For now, we will just skip this cell
+                pass
 
     return

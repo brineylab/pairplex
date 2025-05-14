@@ -15,7 +15,7 @@
 # along with PairPlex.  If not, see <http://www.gnu.org/licenses/>.
 
 
-from abutils.io import list_files, make_dir, from_polars, to_fasta
+from abutils.io import list_files, make_dir, from_polars, to_fasta, parse_fastx
 from abutils.tools import cluster
 from abutils import Sequence
 import abstar
@@ -61,7 +61,7 @@ def setup_logger(output_folder: str, debug: bool) -> logging.Logger:
     return logger
 
 
-def merge(files: list, output_folder: str, log_folder: str, verbose: bool, debug: bool) -> list:
+def merge(files: list, output_folder: str, log_folder: str, schema: str, verbose: bool, debug: bool) -> list:
     """Quick and dirty adapter to leverage merging wrapper from AbStar. Uses Fastp."""
     
     assert isinstance(files, list), "Incorrect list of files to merge. Aborting."
@@ -75,7 +75,7 @@ def merge(files: list, output_folder: str, log_folder: str, verbose: bool, debug
                                         output_directory=merge_dir,
                                         output_format='fastq',
                                         log_directory=log,
-                                        schema= 'element',
+                                        schema=schema,
                                         algo= 'fastp',
                                         binary_path= None,
                                         merge_args= None,
@@ -145,7 +145,7 @@ def split_fastq(input_file: str, output_dir: Path, lines_per_chunk: int = 400_00
 
 def assign_bc_parallel(well: str = None,
                        chunks: list = [], 
-                       barcodes_path: str = "./data/3M-5pgex-jan-2023.txt", 
+                       barcodes_path: str = None, 
                        threads: int = 10, 
                        output_folder: str = './pairplexed/',
                        temp_folder: str = '/tmp/',
@@ -154,6 +154,8 @@ def assign_bc_parallel(well: str = None,
                        verbose: bool = False, 
                        debug: bool = False) -> str:
     global logger
+
+    assert barcodes_path is not None, logger.error("No barcode file provided. Aborting.")
 
     if logger: logger.info(f"[{well}] Starting parallel assignment with {len(chunks)} chunks using {threads} threads.")
     
@@ -245,16 +247,10 @@ def process_chunk(chunk, barcodes_path, check_rc, outpath, enforce_bc_whitelist)
     matches = Counter()
     records = defaultdict(list)
 
-    with open(chunk, "r") as handle:
-        while True:
-            try:
-                header = next(handle).strip()[1:].split(' ')[0]     # remove the '@' at the beginning and the trailing info 
-                seq = next(handle).strip()                          # plain sequence
-                next(handle)                                        # skip the '+' line
-                next(handle)                                        # skip the quality line
-
-                for s in (seq, reverse_complement(seq)) if check_rc else (seq,):
-                    
+    while True:
+        try:
+            for sequence in parse_fastx(chunk, ):
+                for s in (sequence, reverse_complement(sequence)) if check_rc else (seq,):
                     # We first check that we have a match for the TSO
                     m = tso_re.search(s) # we're using search instead of match to allow for diffrent positions of the TSO
 
@@ -279,12 +275,64 @@ def process_chunk(chunk, barcodes_path, check_rc, outpath, enforce_bc_whitelist)
                     break  # stop once match is found for this orientation (don't do more positions)
                     break  # stop once match is found for first orientation (don't do reverse complement)
 
-            except StopIteration:
-                break
+        except StopIteration:
+            break
 
     matches_file, records_file = write_matches(matches, records, Path(outpath))
 
     return matches_file, records_file
+
+
+# def process_chunk(chunk, barcodes_path, check_rc, outpath, enforce_bc_whitelist):
+#     """Process a chunk of fastq file to extract barcodes, UMIs and TSO sequences."""
+    
+#     barcodes = load_barcode_whitelist(barcodes_path)
+
+#     # The TSO sequence is defined as TTTCTTATATG{1,5} in the 5' end of the read (5'RACE protocol). Change sequence here if needed.
+#     tso_re = re.compile(r"TTTCTTATATG{1,5}")
+#     matches = Counter()
+#     records = defaultdict(list)
+
+#     with open(chunk, "r") as handle:
+#         while True:
+#             try:
+#                 header = next(handle).strip()[1:].split(' ')[0]     # remove the '@' at the beginning and the trailing info 
+#                 seq = next(handle).strip()                          # plain sequence
+#                 next(handle)                                        # skip the '+' line
+#                 next(handle)                                        # skip the quality line
+
+#                 for s in (seq, reverse_complement(seq)) if check_rc else (seq,):
+                    
+#                     # We first check that we have a match for the TSO
+#                     m = tso_re.search(s) # we're using search instead of match to allow for diffrent positions of the TSO
+
+#                     if not m:
+#                         continue
+#                     tso = m.group(0)
+#                     leader = s[:m.start()]
+#                     barcode = leader[:-10]
+#                     umi = leader[-10:]
+
+#                     # Then, if enabled, we verify that the barcode is on the whitelist
+#                     if enforce_bc_whitelist:
+#                         if barcode not in barcodes:
+#                             continue
+                    
+#                     # If all concurs, we add the record to the matches and increment counters
+#                     matches[barcode] += 1
+#                     if barcode not in records:
+#                         records[barcode] = []
+#                     records[barcode].append({"UMI":umi,"TSO":tso,"seq_id":header,"sequence":seq})
+
+#                     break  # stop once match is found for this orientation (don't do more positions)
+#                     break  # stop once match is found for first orientation (don't do reverse complement)
+
+#             except StopIteration:
+#                 break
+
+#     matches_file, records_file = write_matches(matches, records, Path(outpath))
+
+#     return matches_file, records_file
 
 
 def write_matches(matches: Counter, records: dict, outpath: Path):
@@ -330,3 +378,78 @@ def get_barcode_file(name: str) -> str:
         return "./barcodes/737K-august-2016.txt"
     else:
         raise ValueError(f"Unknown barcode file: {name}")
+    
+
+
+def process_cell(well: str, 
+                 cell: str, 
+                 sequence_bin: dict, 
+                 cluster_folder: str, 
+                 min_cluster_size: int, 
+                 clustering_threshold: float,
+                 min_umi_count: int, 
+                 consentroid: bool, 
+                 debug: bool) -> dict:
+    """Process a single cell to cluster sequences and generate contigs."""
+    
+    global logger
+
+    if debug:
+        logger.debug(f"[{well}] Processing cell {cell} with {len(sequence_bin)} sequences (clustering threshold: {clustering_threshold})")
+
+    # Cluster the sequences
+    sequences = from_polars(sequence_bin, id_key="seq_id", sequence_key="sequence")
+    chain_bins = cluster.cluster(sequences, threshold=clustering_threshold, temp_dir=cluster_folder, debug=False)
+
+    if debug:
+        logger.debug(f"[{well}] Cell {cell} → {len(chain_bins)} clusters")
+
+    # Generate contigs
+    contigs = []
+    metadata = []
+
+    for i, chain_bin in enumerate(chain_bins):
+        if chain_bin.size < min_cluster_size:
+            if debug:
+                logger.debug(f"[{well}] Skipping cluster {i} of cell {cell} (size={chain_bin.size})")
+            continue
+
+        seq_ids = chain_bin.seq_ids
+        umi_count = (
+            sequence_bin.filter(
+                (pl.col('barcode') == cell) & 
+                (pl.col('seq_id').is_in(seq_ids))
+            )
+            .select('UMI')
+            .unique()
+            .height
+        )
+
+        if umi_count < min_umi_count:
+            if debug:
+                logger.debug(f"[{well}] Skipping cluster {i} of cell {cell} due to low UMI count ({umi_count})")
+            continue
+
+        if consentroid == "consensus":
+            sequence = chain_bin.make_consensus().sequence
+            if debug:
+                logger.debug(f"[{well}] Cell {cell}, cluster {i} → consensus built (UMIs={umi_count}, reads={chain_bin.size})")
+        elif consentroid == "centroid":
+            sequence = chain_bin.centroid.sequence
+            if debug:
+                logger.debug(f"[{well}] Cell {cell}, cluster {i} → centroid selected (UMIs={umi_count}, reads={chain_bin.size})")
+
+        name = f"{cell}_contig-{i}"
+        chain = Sequence(sequence, id=name)
+        contigs.append(chain)
+        metadata.append({
+            "sequence_id": name,
+            "UMI_count": umi_count,
+            "reads": chain_bin.size
+        })
+
+    return {
+        "contigs": contigs,
+        "metadata": metadata
+    }
+                
