@@ -123,8 +123,8 @@ def reverse_complement(seq: str) -> str:
 
 
 def load_barcode_whitelist(path: str) -> Set[str]:
-    return set(line.strip() for line in open(path))
-
+    with open(path) as f:
+        return set(line.strip() for line in f)
 
 
 def split_fastq(input_file: str, output_dir: Path, lines_per_chunk: int = 400_000) -> list[str]:
@@ -153,7 +153,9 @@ def assign_bc_parallel(well: str = None,
                        debug: bool = False) -> str:
     global logger
 
-    assert barcodes_path is not None, logger.error("No barcode file provided. Aborting.")
+    if barcodes_path is None:
+        logger.error("No barcode file provided. Aborting.")
+        raise AssertionError("No barcode file provided. Aborting.")
 
     if logger: logger.info(f"[{well}] Starting parallel assignment with {len(chunks)} chunks using {threads} threads.")
     
@@ -161,9 +163,9 @@ def assign_bc_parallel(well: str = None,
 
     # to be parallelized
     results = []
-    for chunk, chun_ou_path in zip(chunks, chunk_out_paths):
+    for chunk, chunk_ou_path in zip(chunks, chunk_out_paths):
         results.append(
-            process_chunk(chunk, barcodes_path, check_rc, str(chun_ou_path), enforce_bc_whitelist)
+            process_chunk(chunk, barcodes_path, check_rc, str(chunk_ou_path), enforce_bc_whitelist)
         )
     
     match_csvs = [csv for csv, _ in results]
@@ -223,12 +225,21 @@ def assign_bc_parallel(well: str = None,
 
     # Clean up temporary chunk files
     for chunk in chunks:
-        os.remove(chunk)
+        try:
+            os.remove(chunk)
+        except FileNotFoundError:
+            pass
     for csv in match_csvs:
-        os.remove(csv)
+        try:
+            os.remove(csv)
+        except FileNotFoundError:
+            pass
     for pq in record_parquets:
-        os.remove(pq)
- 
+        try:
+            os.remove(pq)
+        except FileNotFoundError:
+            pass
+
     time.sleep(1)  # Ensure all is done before returning
 
     return {"matches": final_csv, "records": final_parquet}
@@ -247,8 +258,8 @@ def process_chunk(chunk, barcodes_path, check_rc, outpath, enforce_bc_whitelist)
 
     while True:
         try:
-            for sequence in parse_fastx(chunk, ):
-                for s in (sequence, reverse_complement(sequence)) if check_rc else (seq,):
+            for seq in parse_fastx(chunk, ):
+                for s in (seq.sequence, reverse_complement(seq.sequence)) if check_rc else (seq,):
                     # We first check that we have a match for the TSO
                     m = tso_re.search(s) # we're using search instead of match to allow for diffrent positions of the TSO
 
@@ -268,9 +279,8 @@ def process_chunk(chunk, barcodes_path, check_rc, outpath, enforce_bc_whitelist)
                     matches[barcode] += 1
                     if barcode not in records:
                         records[barcode] = []
-                    records[barcode].append({"UMI":umi,"TSO":tso,"seq_id":header,"sequence":seq})
+                    records[barcode].append({"UMI":umi,"TSO":tso,"seq_id":seq.id,"sequence":seq.sequence})
 
-                    break  # stop once match is found for this orientation (don't do more positions)
                     break  # stop once match is found for first orientation (don't do reverse complement)
 
         except StopIteration:
@@ -346,6 +356,13 @@ def write_matches(matches: Counter, records: dict, outpath: Path):
 
     df = pd.DataFrame(matches.items(), columns=["cell_barcode", "count"])
     df.to_csv(csv_file, index=False, header=False)
+
+    if records == {}:
+        if logger:
+            logger.warning(f"No records found for {csv_file}. Returning empty Parquet file.")
+        empty_df = pl.DataFrame(schema={"barcode": pl.Utf8, "UMI": pl.Utf8, "TSO": pl.Utf8, "seq_id": pl.Utf8, "sequence": pl.Utf8})
+        empty_df.write_parquet(parquet_file)
+        return csv_file, parquet_file
 
     if logger:
         logger.debug(f"Writing records to {parquet_file}")
@@ -450,4 +467,3 @@ def process_cell(well: str,
         "contigs": contigs,
         "metadata": metadata
     }
-                

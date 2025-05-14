@@ -45,6 +45,7 @@ def main(sequencing_folder: str = "./",
          min_cluster_size: int = 3,
          min_umi_count: int = 2,
          consentroid: str = "consensus",
+         only_pairs: bool = True,
          verbose: bool = False,
          debug: bool = False
         ):
@@ -219,9 +220,15 @@ def main(sequencing_folder: str = "./",
             
             if len(cell_df) == 1:
                 # Only one contig, no pairing needed
-                continue
+                if only_pairs:
+                    # If we only want pairs, we skip this cell
+                    continue
+                else:
+                    # To-do
+                    pass
+
             elif len(cell_df) == 2:
-                # Two contigs, pair them
+                # Two contigs, try to pair them
                 chain1 = cell_df.filter(pl.col('locus') == 'IGH')
                 chain2 = cell_df.filter(pl.col('chain') != 'IGH')
                 
@@ -236,6 +243,7 @@ def main(sequencing_folder: str = "./",
             elif len(cell_df) > 2:
                 # More than two contigs (doublets? or secondary recombination). We need to figure out what to do in this case
                 # For now, we will just skip this cell
+                # To-do
                 pass
 
     return
