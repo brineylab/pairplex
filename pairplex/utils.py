@@ -15,7 +15,7 @@
 # along with PairPlex.  If not, see <http://www.gnu.org/licenses/>.
 
 
-from abutils.io import make_dir, from_polars, parse_fastx
+from abutils.io import make_dir, from_polars, from_pandas, parse_fastx
 from abutils.tools import cluster
 from abutils import Sequence
 from abstar.preprocess import merging
@@ -63,12 +63,16 @@ def setup_logger(output_folder: str, debug: bool) -> logging.Logger:
 def merge(files: list, output_folder: str, log_folder: str, schema: str, verbose: bool, debug: bool) -> list:
     """Quick and dirty adapter to leverage merging wrapper from AbStar. Uses Fastp."""
     
+    global logger
+
     assert isinstance(files, list), "Incorrect list of files to merge. Aborting."
     assert files != [], "List of files to merge is empty. Aborting"
 
     merge_dir = os.path.join(output_folder, '01_merged')
     log = os.path.join(log_folder, 'merging')
     make_dir(merge_dir)
+
+    logging.info(f"Merging of {len(files)} files into {merge_dir}")
 
     merged_files = merging.merge_fastqs(files=files,
                                         output_directory=merge_dir,
@@ -470,7 +474,7 @@ def get_barcode_file(name: str) -> str:
 
 def process_cell(well: str, 
                  cell: str, 
-                 sequence_bin: dict, 
+                 sequence_bin: pl.DataFrame | pd.DataFrame, 
                  cluster_folder: str, 
                  min_cluster_size: int, 
                  clustering_threshold: float,
@@ -485,7 +489,10 @@ def process_cell(well: str,
         logger.debug(f"[{well}] Processing cell {cell} with {len(sequence_bin)} sequences (clustering threshold: {clustering_threshold})")
 
     # Cluster the sequences
-    sequences = from_polars(sequence_bin, id_key="seq_id", sequence_key="sequence")
+    if isinstance(sequence_bin, pl.DataFrame):
+        sequences = from_polars(sequence_bin, id_key="seq_id", sequence_key="sequence")
+    elif isinstance(sequence_bin, pd.DataFrame):
+        sequences = from_pandas(sequence_bin, id_key="seq_id", sequence_key="sequence")
     chain_bins = cluster.cluster(sequences, threshold=clustering_threshold, temp_dir=cluster_folder, debug=False)
 
     if debug:
@@ -502,15 +509,22 @@ def process_cell(well: str,
             continue
 
         seq_ids = chain_bin.seq_ids
-        umi_count = (
-            sequence_bin.filter(
-                (pl.col('barcode') == cell) & 
-                (pl.col('seq_id').is_in(seq_ids))
+        if isinstance(sequence_bin, pl.DataFrame):
+            umi_count = (
+                sequence_bin.filter(
+                    (pl.col('barcode') == cell) & 
+                    (pl.col('seq_id').is_in(seq_ids))
+                )
+                .select('UMI')
+                .unique()
+                .height
             )
-            .select('UMI')
-            .unique()
-            .height
-        )
+        elif isinstance(sequence_bin, pd.DataFrame):
+            umi_count = (
+                sequence_bin.query(f"barcode == '{cell}' and seq_id in {tuple(seq_ids)}")
+                .drop_duplicates(subset=['UMI'])
+                .shape[0]
+            )
 
         if umi_count < min_umi_count:
             if debug:

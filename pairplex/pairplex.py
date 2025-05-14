@@ -18,6 +18,7 @@
 
 from abutils.io import list_files, make_dir, to_fasta
 from abutils import Pair
+from tqdm.auto import tqdm
 import abstar
 import os, shutil
 from natsort import natsorted
@@ -152,22 +153,53 @@ def main(sequencing_folder: str = "./",
         if verbose:
             logger.info(f"[{well}] Found {len(cells)} cells")
 
-        # This needs to be parallelized
-        for cell in cells:
-            
-            sequence_bin = df.filter(pl.col('barcode') == cell)
-            results = process_cell(well=well,
-                                   cell=cell, 
-                                   sequence_bin=sequence_bin, 
-                                   cluster_folder=cluster_folder, 
-                                   clustering_threshold=0.8,
-                                   min_cluster_size=min_cluster_size, 
-                                   min_umi_count=min_umi_count, 
-                                   consentroid=consentroid, 
-                                   debug=debug)
-            
-            well_contigs.extend(results['contigs'])
-            well_metadata.extend(results['metadata'])
+        # Change the value of the clustering threshold here if needed
+        clustering_threshold = 0.8
+
+        if threads == 1:
+            for cell in cells:
+                
+                sequence_bin = df.filter(pl.col('barcode') == cell)
+                results = process_cell(well=well,
+                                    cell=cell, 
+                                    sequence_bin=sequence_bin, 
+                                    cluster_folder=cluster_folder, 
+                                    clustering_threshold=clustering_threshold,
+                                    min_cluster_size=min_cluster_size, 
+                                    min_umi_count=min_umi_count, 
+                                    consentroid=consentroid, 
+                                    debug=debug)
+                
+                well_contigs.extend(results['contigs'])
+                well_metadata.extend(results['metadata'])
+        
+        else:
+            futures = []
+            with ProcessPoolExecutor(
+                    max_workers=threads,
+                    mp_context=multiprocessing.get_context("fork"),
+                ) as executor:
+                    for cell in cells:
+                        sequence_bin = df.filter(pl.col('barcode') == cell).to_pandas()
+                        futures.append(
+                            executor.submit(
+                                process_cell,
+                                well=well,
+                                cell=cell,
+                                sequence_bin=sequence_bin,
+                                cluster_folder=cluster_folder,
+                                clustering_threshold=clustering_threshold,
+                                min_cluster_size=min_cluster_size,
+                                min_umi_count=min_umi_count,
+                                consentroid=consentroid,
+                                debug=debug,
+                            )
+                        )
+
+                    for future in tqdm(as_completed(futures), total=len(cells), desc=f"[{well}] Processing cells"):
+                        result = future.result()
+                        well_contigs.extend(result['contigs'])
+                        well_metadata.extend(result['metadata'])
 
         if not debug:
             # Clean up temporary files
