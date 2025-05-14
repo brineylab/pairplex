@@ -15,17 +15,15 @@
 # along with PairPlex.  If not, see <http://www.gnu.org/licenses/>.
 
 
-from abutils.io import list_files, make_dir, from_polars, to_fasta, parse_fastx
+from abutils.io import make_dir, from_polars, parse_fastx
 from abutils.tools import cluster
 from abutils import Sequence
-import abstar
 from abstar.preprocess import merging
-import re, os, subprocess, shutil, tempfile, sys, multiprocessing, logging, time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import re, os, subprocess, logging, time
 from collections import defaultdict, Counter
 from natsort import natsorted
 from pathlib import Path
-from typing import Set, Tuple
+from typing import Set
 import polars as pl
 import pandas as pd
 
