@@ -9,26 +9,38 @@
 # (at your option) any later version.
 # PairPlex is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 # GNU General Public License for more details.
 # You should have received a copy of the GNU General Public License
-# along with PairPlex.  If not, see <http://www.gnu.org/licenses/>.
+# along with PairPlex. If not, see <http://www.gnu.org/licenses/>.
 
 
+import multiprocessing as mp
 import os
+import re
 import shutil
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import abstar
+import abutils
 import pandas as pd
 import polars as pl
-from abutils import Pair
-from abutils.io import list_files, make_dir, to_fasta
+from abutils.io import from_polars, list_files, make_dir, split_fastq, to_fasta
 from natsort import natsorted
 from tqdm.auto import tqdm
 
-from pairplex.utils import *
+from pairplex.utils import (
+    assign_bc_paralleled,
+    assign_bc_unparalleled,
+    get_barcode_file,
+    list_wells,
+    merge,
+    process_cell,
+    process_cell_pair,
+    setup_logger,
+)
 
 ######################################################
 ##                Main function                     ##
@@ -36,13 +48,13 @@ from pairplex.utils import *
 
 
 def main(
-    sequencing_folder: str = "./",
-    output_folder: str = "./pairplexed/",
+    input_directory: str,
+    output_directory: str,
     barcodes: str = "5prime",
     enforce_bc_whitelist: bool = True,
     sequencer: str = "element",
     chunk_size: int = 100_000,
-    threads: int = 32,
+    n_processes: int | None = None,
     min_cluster_size: int = 3,
     min_umi_count: int = 2,
     consentroid: str = "consensus",
@@ -52,51 +64,95 @@ def main(
     debug: bool = False,
 ):
     """PairPlex: DemultiPLEXing and PAIRing BCR sequences from combinatorial single-cellRNA sequencing experiments.
-    Args:
-        sequencing_folder (str): Path to the folder containing the sequencing data.
-        output_folder (str): Path to the folder where the output will be saved.
-        barcodes (str): Name of the barcode file to use. Default is "5prime". Options are "5prime", "3prime", or 'v2'.
-        enforce_bc_whitelist (bool): Whether to enforce the barcode whitelist. Default is True.
-        sequencer (str): Sequencer type. Default is "element". Options are "element" or "illumina".
-        chunk_size (int): Number of reads per chunk for parallel processing. Default is 100_000.
-        threads (int): Number of threads to use for parallel processing. Default is 32.
-        min_cluster_size (int): Minimum number of reads to consider a cluster. Default is 3.
-        min_umi_count (int): Minimum UMI count to consider a chain as valid in a cluster. Default is 2.
-        consentroid (str): Type of consensus sequence to generate. Default is "consensus". Options are "consensus" or "centroid".
-        only_pairs (bool): Whether to only keep paired chains. Default is True.
-        output_fmt (str): Format of the output files. Default is "tsv". Options are "tsv" or "parquet".
-        verbose (bool): Whether to print verbose output. Default is False.
-        debug (bool): Whether to print debug output. Default is False.
+
+    Parameters
+    ----------
+    input_directory : str
+        Path to the folder containing the sequencing data.
+
+    output_directory : str
+        Path to the folder where the output will be saved.
+
+    barcodes : str
+        Name of the barcode file to use. Default is "5prime". Options are "5prime", "3prime", or 'v2'.
+
+    enforce_bc_whitelist : bool
+        Whether to enforce the barcode whitelist. Default is True.
+
+    sequencer : str
+        Sequencer type. Default is "element". Options are "element" or "illumina".
+
+    chunk_size : int
+        Number of reads per chunk for parallel processing. Default is 100_000.
+
+    n_processes : int | None
+        Number of processes to use for parallel processing. Default is None (use all available cores).
+
+    min_cluster_size : int
+        Minimum number of reads to consider a cluster. Default is 3.
+
+    min_umi_count : int
+        Minimum UMI count to consider a chain as valid in a cluster. Default is 2.
+
+    consentroid : str
+        Type of consensus sequence to generate. Default is "consensus". Options are "consensus" or "centroid".
+
+    only_pairs : bool
+        Whether to only keep paired chains. Default is True.
+
+    output_fmt : str
+        Format of the output files. Default is "tsv". Options are "tsv" or "parquet".
+
+    verbose : bool
+        Whether to print verbose output. Default is False.
+
+    debug : bool
+        Whether to print debug output. Default is False.
     """
 
     ###################### Pre-flight ######################
 
-    make_dir(output_folder)
-    temp_folder = os.path.join(output_folder, "temp")
-    log_folder = os.path.join(output_folder, "00_logs")
-    make_dir(log_folder)
-    make_dir(temp_folder)
+    output_directory = Path(output_directory).resolve()
+    temp_directory = output_directory / "temp"
+    log_directory = output_directory / "00_logs"
+    output_directory.mkdir(parents=True, exist_ok=True)
+    temp_directory.mkdir(exist_ok=True)
+    log_directory.mkdir(exist_ok=True)
+
     global logger
-    logger = setup_logger(log_folder, verbose, debug)
+    logger = setup_logger(log_directory, verbose, debug)
     logger.info("====== Starting PairPlex pipeline ======")
 
-    if threads > os.cpu_count():
-        logger.warning(
-            f"Requested {threads} threads, but only {os.cpu_count()} are available. Using {os.cpu_count()} threads instead."
+    if n_processes is None:
+        n_processes = mp.cpu_count()
+    if n_processes > mp.cpu_count():
+        # logger.warning(  # warning is the same as info in this case
+        logger.info(
+            f"Requested {n_processes} processes, but only {mp.cpu_count()} are available. Using {mp.cpu_count()} processes instead."
         )
-        threads = os.cpu_count()
+        n_processes = mp.cpu_count()
 
     ###################### Pre-processing data ######################
     logger.info("=== Pre-processing data ===")
 
-    files = list_files(sequencing_folder, recursive=True, extension="fastq.gz")
+    files = abutils.io.list_files(
+        str(input_directory),
+        recursive=True,
+        extension=["fastq.gz", "fq.gz", "fastq", "fq"],
+    )
     files = [f for f in files if "Unassigned" not in f]
+
+    # TODO: this is a potential problem -- what if R2 is present in the sample name?
+    # example: DONOR2.fastq would trigger a merging attempt
+    # we should either make read merging an explicit argument or require paired-end reads (no processing of already-merged files)
+    # the first is probably better, because what if a new platform with 600bp+ single-end reads comes out?
+    # could make read merging `True` by default, so that the default behavior is compatible with current Illumina/Element read profiles
     if any(("R2" in f) for f in files):
         # Paired-end sequencing, requires merging
         merged_files = merge(
             files=files,
-            output_folder=output_folder,
-            log_folder=log_folder,
+            output_folder=output_directory,
+            log_folder=log_directory,
             schema=sequencer,
             verbose=verbose,
             debug=debug,
@@ -121,20 +177,20 @@ def main(
         fastq_chunks = split_fastq(
             prefix=well,
             input_file=fastq,
-            output_dir=Path(temp_folder),
+            output_dir=Path(temp_directory),
             lines_per_chunk=4 * chunk_size,
         )
 
         # Then, we assign barcodes/UMI and TSO for every chunk and concatenate results in a single file
-        if threads > 1:
-            threads_to_use = min(threads, len(fastq_chunks))
+        if n_processes > 1:
+            n_processes_to_use = min(n_processes, len(fastq_chunks))
             barcoded = assign_bc_paralleled(
                 well=well,
                 chunks=fastq_chunks,
                 barcodes_path=barcodes_path,
-                threads=threads_to_use,
-                output_folder=output_folder,
-                temp_folder=temp_folder,
+                threads=n_processes_to_use,
+                output_folder=output_directory,
+                temp_folder=temp_directory,
                 enforce_bc_whitelist=enforce_bc_whitelist,
                 check_rc=True,
                 verbose=verbose,
@@ -145,8 +201,8 @@ def main(
                 well=well,
                 chunks=fastq_chunks,
                 barcodes_path=barcodes_path,
-                output_folder=output_folder,
-                temp_folder=temp_folder,
+                output_folder=output_directory,
+                temp_folder=temp_directory,
                 enforce_bc_whitelist=enforce_bc_whitelist,
                 check_rc=True,
                 verbose=verbose,
@@ -169,8 +225,8 @@ def main(
         well_contigs = []
         well_metadata = []
 
-        cluster_folder = os.path.join(temp_folder, well)
-        make_dir(cluster_folder)
+        cluster_folder = temp_directory / well
+        cluster_folder.mkdir(exist_ok=True)
 
         df = pl.read_parquet(barcoded_wells[well]["records"])
         cells = df["barcode"].unique()
@@ -181,7 +237,7 @@ def main(
         # Change the value of the clustering threshold here if needed
         clustering_threshold = 0.8
 
-        if threads == 1:
+        if n_processes == 1:
             for cell in cells:
                 sequence_bin = df.filter(pl.col("barcode") == cell)
                 results = process_cell(
@@ -202,8 +258,8 @@ def main(
         else:
             futures = []
             with ProcessPoolExecutor(
-                max_workers=threads,
-                mp_context=multiprocessing.get_context("fork"),
+                max_workers=n_processes,
+                mp_context=mp.get_context("fork"),
             ) as executor:
                 for cell in cells:
                     sequence_bin = df.filter(pl.col("barcode") == cell).to_pandas()
@@ -236,17 +292,17 @@ def main(
             shutil.rmtree(cluster_folder)
 
         # Save contigs
-        contig_folder = os.path.join(output_folder, "03_contigs")
-        make_dir(contig_folder)
-        contig_path = os.path.join(contig_folder, f"{well}_contigs.fasta")
+        contig_folder = output_directory / "03_contigs"
+        contig_folder.mkdir(exist_ok=True)
+        contig_path = contig_folder / f"{well}_contigs.fasta"
         to_fasta(sequences=well_contigs, fasta_file=contig_path)
         if verbose:
             logger.debug(f"[{well}] Saved {len(well_contigs)} contigs to {contig_path}")
 
         # Save metadata
-        metadata_folder = os.path.join(output_folder, "04_metadata")
-        make_dir(metadata_folder)
-        metadata_file = os.path.join(metadata_folder, f"{well}_metadata.csv")
+        metadata_folder = output_directory / "04_metadata"
+        metadata_folder.mkdir(exist_ok=True)
+        metadata_file = metadata_folder / f"{well}_metadata.csv"
         df_metadata = pd.DataFrame(well_metadata)
         df_metadata.to_csv(metadata_file, index=False)
         if verbose:
@@ -257,12 +313,18 @@ def main(
         minutes, seconds = divmod(int(elapsed), 60)
         logger.info(f"[{well}] Finished in {minutes:02d}:{seconds:02d} minutes")
 
+    #
+    # TODO: remove this section
+    # better to just generate the contigs and metadata files and let the user run abstar themselves
+    # they may want to run abstar with different parameters (custom germline database, etc.)
+    #
+
     ###################### Running AbStar ######################
     logger.info("=== Running AbStar annotation ===")
 
     # Pre-flight
-    abstar_folder = os.path.join(output_folder, "05_annotated")
-    make_dir(abstar_folder)
+    abstar_folder = output_directory / "05_annotated"
+    abstar_folder.mkdir(exist_ok=True)
 
     contig_fastas = list_files(contig_folder, recursive=True, extension="fasta")
     contig_fastas = [f for f in contig_fastas if "checkpoint" not in f]
@@ -292,10 +354,12 @@ def main(
     logger.info("=== Pairing chains  ===")
 
     # Create the pairs folder
-    pairs_folder = os.path.join(output_folder, "06_pairs")
-    make_dir(pairs_folder)
+    pairs_folder = output_directory / "06_pairs"
+    pairs_folder.mkdir(exist_ok=True)
 
-    wells_metadata = list_files("./test/04_metadata/", recursive=True, extension="csv")
+    wells_metadata = list_files(
+        str(output_directory / "04_metadata"), recursive=True, extension="csv"
+    )
     wells_metadata = [f for f in wells_metadata if "checkpoint" not in f]
     well_to_files = {}
     for f in wells_metadata:
@@ -322,7 +386,7 @@ def main(
         cells = df["cell_barcode"].unique()
         pair_dicts = []
 
-        if threads == 1:
+        if n_processes == 1:
             for cell in tqdm(cells):
                 cell_df = df.filter(pl.col("cell_barcode") == cell)
 
@@ -393,10 +457,10 @@ def main(
                     # To-do
                     pass
 
-        elif threads > 1:
+        elif n_processes > 1:
             pairs_dicts = []
             with ProcessPoolExecutor(
-                max_workers=threads, mp_context=multiprocessing.get_context("spawn")
+                max_workers=n_processes, mp_context=mp.get_context("spawn")
             ) as executor:
                 futures = [
                     executor.submit(
@@ -431,8 +495,8 @@ def main(
     logger.info("=== Generating final output  ===")
 
     # Create the final output folder
-    final_output_folder = os.path.join(output_folder, "07_final")
-    make_dir(final_output_folder)
+    final_output_folder = output_directory / "07_final"
+    final_output_folder.mkdir(exist_ok=True)
 
     pair_files = list_files(pairs_folder, recursive=True, extension="tsv")
     wells = [os.path.basename(f).split("_")[0] for f in pair_files]
