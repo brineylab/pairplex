@@ -9,17 +9,17 @@
 # (at your option) any later version.
 # PairPlex is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 # GNU General Public License for more details.
 # You should have received a copy of the GNU General Public License
-# along with PairPlex.  If not, see <http://www.gnu.org/licenses/>.
+# along with PairPlex. If not, see <http://www.gnu.org/licenses/>.
 
 
 import logging
-import multiprocessing
+import multiprocessing as mp
 import os
 import re
-import subprocess
+import subprocess as sp
 import time
 from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -30,6 +30,7 @@ import pandas as pd
 import polars as pl
 from abstar.preprocess import merging
 from abutils import Sequence
+from abutils.core.sequence import reverse_complement
 from abutils.io import from_pandas, from_polars, make_dir, parse_fastx
 from abutils.tools import cluster
 from natsort import natsorted
@@ -133,9 +134,9 @@ def list_wells(merged_files: list, verbose: bool, debug: bool) -> dict:
     return well_to_files
 
 
-def reverse_complement(seq: str) -> str:
-    complement = str.maketrans("ACGTN", "TGCAN")
-    return seq.translate(complement)[::-1]
+# def reverse_complement(seq: str) -> str:
+#     complement = str.maketrans("ACGTN", "TGCAN")
+#     return seq.translate(complement)[::-1]
 
 
 def load_barcode_whitelist(path: str) -> Set[str]:
@@ -143,26 +144,26 @@ def load_barcode_whitelist(path: str) -> Set[str]:
         return set(line.strip() for line in f)
 
 
-def split_fastq(
-    prefix: str, input_file: str, output_dir: Path, lines_per_chunk: int = 400_000
-) -> list[str]:
-    if prefix is None:
-        lead = output_dir / "chunk_"
-    else:
-        lead = output_dir / f"{prefix}_chunk_"
-    subprocess.run(
-        [
-            "split",
-            "-l",
-            str(lines_per_chunk),
-            "--numeric-suffixes=1",
-            "--additional-suffix=.fastq",
-            input_file,
-            str(lead),
-        ],
-        check=True,
-    )
-    return sorted(str(f) for f in output_dir.glob("*chunk_*.fastq"))
+# def split_fastq(
+#     prefix: str, input_file: str, output_dir: Path, lines_per_chunk: int = 400_000
+# ) -> list[str]:
+#     if prefix is None:
+#         lead = output_dir / "chunk_"
+#     else:
+#         lead = output_dir / f"{prefix}_chunk_"
+#     subprocess.run(
+#         [
+#             "split",
+#             "-l",
+#             str(lines_per_chunk),
+#             "--numeric-suffixes=1",
+#             "--additional-suffix=.fastq",
+#             input_file,
+#             str(lead),
+#         ],
+#         check=True,
+#     )
+#     return sorted(str(f) for f in output_dir.glob("*chunk_*.fastq"))
 
 
 def assign_bc_unparalleled(
@@ -322,7 +323,7 @@ def assign_bc_paralleled(
 
     results = []
     # context = multiprocessing.get_context("spawn") # /!\ Make sure to use "spawn" when using polars
-    with multiprocessing.Pool(
+    with mp.Pool(
         threads,
     ) as pool:
         async_results = []
