@@ -435,113 +435,120 @@ def assign_bc_paralleled(
     return {"matches": final_csv, "records": final_parquet}
 
 
-def process_chunk(chunk, barcodes_path, check_rc, outpath, enforce_bc_whitelist):
+def process_chunk(
+    chunk: list,
+    chunk_id: str | int,
+    output_directory: str | Path,
+    barcodes_path: str | Path | None = None,
+    tso_pattern: str = r"TTTCTTATATG{1,5}",
+    check_rc: bool = True,
+    enforce_bc_whitelist: bool = True,
+) -> str | None:
     """Process a chunk of fastq file to extract barcodes, UMIs and TSO sequences."""
 
-    barcodes = load_barcode_whitelist(barcodes_path)
+    if enforce_bc_whitelist:
+        whitelist = load_barcode_whitelist(barcodes_path)
 
-    # The TSO sequence is defined as TTTCTTATATG{1,5} in the 5' end of the read (5'RACE protocol). Change sequence here if needed.
-    tso_re = re.compile(r"TTTCTTATATG{1,5}")
-    matches = Counter()
-    records = defaultdict(list)
+    tso_pattern = re.compile(tso_pattern)
+    # matches = Counter()
+    records = []
 
-    for seq in parse_fastx(
-        chunk,
-    ):
-        for s in (
-            (seq.sequence, reverse_complement(seq.sequence))
-            if check_rc
-            else (seq.sequence,)
-        ):
-            # We first check that we have a match for the TSO
-            m = tso_re.search(
-                s
-            )  # we're using search instead of match to allow for diffrent positions of the TSO
-
+    for seq in parse_fastx(chunk):
+        seqs = [seq.sequence]
+        if check_rc:
+            seqs.append(reverse_complement(seq.sequence))
+        for s in seqs:
+            # find the TSO
+            m = tso_pattern.search(s)
             if not m:
                 continue
+
+            # parse barcode and UMI
             tso = m.group(0)
+            sequence = s[m.start() :]
             leader = s[: m.start()]
             barcode = leader[:-10]
             umi = leader[-10:]
 
-            # Then, if enabled, we verify that the barcode is on the whitelist
+            # check whitelist (if necessary)
             if enforce_bc_whitelist:
-                if barcode not in barcodes:
+                if barcode not in whitelist:
                     continue
-
-            # If all concurs, we add the record to the matches and increment counters
-            matches[barcode] += 1
-            if barcode not in records:
-                records[barcode] = []
-            records[barcode].append(
-                {"UMI": umi, "TSO": tso, "seq_id": seq.id, "sequence": seq.sequence}
+            records.append(
+                {
+                    "umi": umi,
+                    "barcode": barcode,
+                    "tso": tso,
+                    "seq_id": seq.id,
+                    "sequence": sequence,  # we want the sequence with TSO, barcode and UMI stripped off
+                }
             )
+            break
 
-            break  # stop once match is found for first orientation (don't do reverse complement)
+    if records:
+        output_file = Path(output_directory) / f"bcdf_{chunk_id}.parquet"
+        df = pl.DataFrame(records)
+        df.write_parquet(output_file)
+        return str(output_file)
 
-    matches_file, records_file = write_matches(matches, records, Path(outpath))
 
-    return matches_file, records_file
+# def write_matches(matches: Counter, records: dict, outpath: Path):
+#     """Write the matches and records to CSV and Parquet files respectively."""
 
+#     global logger
 
-def write_matches(matches: Counter, records: dict, outpath: Path):
-    """Write the matches and records to CSV and Parquet files respectively."""
+#     csv_file = Path(str(outpath) + "_matches.csv")
+#     parquet_file = Path(str(outpath) + "_records.parquet")
 
-    global logger
+#     if logger:
+#         logger.debug(f"Writing matches to {csv_file}")
 
-    csv_file = Path(str(outpath) + "_matches.csv")
-    parquet_file = Path(str(outpath) + "_records.parquet")
+#     df = pd.DataFrame(matches.items(), columns=["cell_barcode", "count"])
+#     df.to_csv(csv_file, index=False, header=False)
 
-    if logger:
-        logger.debug(f"Writing matches to {csv_file}")
+#     if records == {}:
+#         if logger:
+#             logger.warning(
+#                 f"No records found for {csv_file}. Returning empty Parquet file."
+#             )
+#         ## /!\ use Polars only with 'spawn' context manager
+#         # empty_df = pl.DataFrame(schema={"barcode": pl.Utf8, "UMI": pl.Utf8, "TSO": pl.Utf8, "seq_id": pl.Utf8, "sequence": pl.Utf8})
+#         # empty_df.write_parquet(parquet_file)
+#         ## /!\ use Pandas with 'fork' context manager (default)
+#         empty_df = pd.DataFrame(
+#             {
+#                 "barcode": pd.Series(dtype="str"),
+#                 "UMI": pd.Series(dtype="str"),
+#                 "TSO": pd.Series(dtype="str"),
+#                 "seq_id": pd.Series(dtype="str"),
+#                 "sequence": pd.Series(dtype="str"),
+#             }
+#         )
+#         empty_df.to_parquet(parquet_file, index=False)
+#         return csv_file, parquet_file
 
-    df = pd.DataFrame(matches.items(), columns=["cell_barcode", "count"])
-    df.to_csv(csv_file, index=False, header=False)
+#     if logger:
+#         logger.debug(f"Writing records to {parquet_file}")
 
-    if records == {}:
-        if logger:
-            logger.warning(
-                f"No records found for {csv_file}. Returning empty Parquet file."
-            )
-        ## /!\ use Polars only with 'spawn' context manager
-        # empty_df = pl.DataFrame(schema={"barcode": pl.Utf8, "UMI": pl.Utf8, "TSO": pl.Utf8, "seq_id": pl.Utf8, "sequence": pl.Utf8})
-        # empty_df.write_parquet(parquet_file)
-        ## /!\ use Pandas with 'fork' context manager (default)
-        empty_df = pd.DataFrame(
-            {
-                "barcode": pd.Series(dtype="str"),
-                "UMI": pd.Series(dtype="str"),
-                "TSO": pd.Series(dtype="str"),
-                "seq_id": pd.Series(dtype="str"),
-                "sequence": pd.Series(dtype="str"),
-            }
-        )
-        empty_df.to_parquet(parquet_file, index=False)
-        return csv_file, parquet_file
+#     flattened = [
+#         {"barcode": barcode, **record}
+#         for barcode, recs in records.items()
+#         for record in recs
+#     ]
 
-    if logger:
-        logger.debug(f"Writing records to {parquet_file}")
+#     ## /!\ use Polars only with 'spawn' context manager
+#     # df = pl.DataFrame(flattened)
+#     # df.write_parquet(parquet_file)
+#     ## /!\ use Pandas with 'fork' context manager (default)
+#     df = pd.DataFrame(flattened)
+#     df.to_parquet(parquet_file, index=False)
 
-    flattened = [
-        {"barcode": barcode, **record}
-        for barcode, recs in records.items()
-        for record in recs
-    ]
+#     time.sleep(0.1)  # Ensure the file is written before returning
 
-    ## /!\ use Polars only with 'spawn' context manager
-    # df = pl.DataFrame(flattened)
-    # df.write_parquet(parquet_file)
-    ## /!\ use Pandas with 'fork' context manager (default)
-    df = pd.DataFrame(flattened)
-    df.to_parquet(parquet_file, index=False)
+#     if logger:
+#         logger.debug(f"Successfully finished writing matches and records")
 
-    time.sleep(0.1)  # Ensure the file is written before returning
-
-    if logger:
-        logger.debug(f"Successfully finished writing matches and records")
-
-    return csv_file, parquet_file
+#     return csv_file, parquet_file
 
 
 def get_barcode_file(name: str) -> str:
