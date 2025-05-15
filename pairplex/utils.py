@@ -30,7 +30,7 @@ import pandas as pd
 
 
 
-def setup_logger(output_folder: str, debug: bool) -> logging.Logger:
+def setup_logger(output_folder: str, verbose: bool, debug: bool) -> logging.Logger:
     """Set up a logger with proper formatting and both file and console handlers."""
     
     logger = logging.getLogger("PairPlex")
@@ -38,6 +38,7 @@ def setup_logger(output_folder: str, debug: bool) -> logging.Logger:
         logger.setLevel(logging.DEBUG)
     else:
         logger.setLevel(logging.INFO)
+
 
     # Clear existing handlers
     if logger.hasHandlers():
@@ -553,3 +554,59 @@ def process_cell(well: str,
         "contigs": contigs,
         "metadata": metadata
     }
+
+
+
+def process_cell_pair(cell: str, cell_df: pd.DataFrame, metadata_path: str, only_pairs: bool = False) -> dict | None:
+    # Convert back to Polars
+    cell_df = pl.DataFrame(cell_df)
+
+    if len(cell_df) == 1:
+        if only_pairs:
+            return None
+        else:
+            return None  # TODO: Handle single chain logic
+
+    elif len(cell_df) == 2:
+        chain1 = cell_df.filter(pl.col('locus') == 'IGH')
+        chain2 = cell_df.filter(pl.col('locus') != 'IGH')
+
+        if len(chain1) == 1 and len(chain2) == 1:
+            # Pair the chains
+            heavy = from_polars(chain1)[0]
+            light = from_polars(chain2)[0]
+            for k in [k for k in light.annotations.keys() if k.startswith("d")]:
+                light.annotations.pop(k)
+            
+            # Gather the corresponding metadata
+            heavy_umi, heavy_reads = pl.read_csv(well_to_files[well]).filter((pl.col("sequence_id") == heavy['sequence_id']))[["UMI_count",'reads']].row(0)
+            light_umi, light_reads = pl.read_csv(well_to_files[well]).filter((pl.col("sequence_id") == light['sequence_id']))[["UMI_count",'reads']].row(0)
+
+            # Prepare the dictionary for the pair
+            pair_dict = {}
+            pair_dict['index'] = cell
+            for k, v in heavy.annotations.items():
+                pair_dict[k+":1"] = v
+            pair_dict['umi:1'] = heavy_umi
+            pair_dict['reads:1'] = heavy_reads
+            for k, v in light.annotations.items():
+                pair_dict[k+":2"] = v
+            pair_dict['umi:2'] = light_umi
+            pair_dict['reads:2'] = light_reads
+
+            return pair_dict
+        
+        else:
+            # Handle the case where we have two chains but they are not paired
+            if only_pairs:
+                return None
+            else:
+                return None
+    elif len(cell_df) > 2:
+        # Handle the case where we have more than two chains
+        if only_pairs:
+            return None
+        else:
+            return None
+
+    return None
