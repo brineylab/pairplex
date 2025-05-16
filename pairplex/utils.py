@@ -61,6 +61,13 @@ def setup_logger(output_folder: str, verbose: bool, debug: bool) -> logging.Logg
     return logger
 
 
+def close_logger(logger: logging.Logger):
+    for handler in logger.handlers:
+        handler.close()
+        logger.removeHandler(handler)
+
+
+
 def merge(files: list, output_folder: str, log_folder: str, schema: str, verbose: bool, debug: bool) -> list:
     """Quick and dirty adapter to leverage merging wrapper from AbStar. Uses Fastp."""
     

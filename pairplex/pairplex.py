@@ -404,18 +404,18 @@ def main(sequencing_folder: str = "./",
             _df = _df.with_columns(pl.lit(well).alias("well"))
             dfs.append(_df)
 
-     # Concatenate all dataframes
-    final_df = pl.concat(dfs)
-    total_unpaired = final_df.shape[0]
+        # Concatenate all dataframes
+        final_df = pl.concat(dfs)
+        total_unpaired = final_df.shape[0]
 
-    if output_fmt == "parquet":
-        final_df.write_parquet(os.path.join(final_output_folder, 'all_unpaired.parquet'))
-        if verbose:
-            logger.info(f"Saved {total_unpaired} single sequences to {os.path.join(final_output_folder, 'all_unpaired.parquet')}")
-    else:
-        final_df.write_csv(os.path.join(final_output_folder, 'all_unpaired.tsv'), separator="\t")
-        if verbose:
-            logger.info(f"Saved {total_unpaired} single sequences to {os.path.join(final_output_folder, 'all_unpaired.tsv')}")
+        if output_fmt == "parquet":
+            final_df.write_parquet(os.path.join(final_output_folder, 'all_unpaired.parquet'))
+            if verbose:
+                logger.info(f"Saved {total_unpaired} single sequences to {os.path.join(final_output_folder, 'all_unpaired.parquet')}")
+        else:
+            final_df.write_csv(os.path.join(final_output_folder, 'all_unpaired.tsv'), separator="\t")
+            if verbose:
+                logger.info(f"Saved {total_unpaired} single sequences to {os.path.join(final_output_folder, 'all_unpaired.tsv')}")
    
 
 
@@ -427,14 +427,15 @@ def main(sequencing_folder: str = "./",
         shutil.rmtree(temp_folder)
     
     if not any([debug, keep_intermediates]):
-        for folder in ['00_logs', '01_logs', '02_barcoded', '03_contigs', '04_metadata', '05_annotated', '06_pairs']:
+        for folder in ['01_merged', '02_barcoded', '03_contigs', '04_metadata', '05_annotated', '06_pairs']:
             shutil.rmtree(os.path.join(output_folder, folder))
             if any([verbose, debug]):
                 logger.debug(f"Removed {os.path.join(output_folder, folder)}")
 
 
     logger.info("Completely PairpPlexed!")
-
+    close_logger(logger)
+    
     return
 
 
