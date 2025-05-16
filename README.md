@@ -20,14 +20,14 @@ Using this approach and PairPlex, we generated a database of XX million natively
 This full dataset is made available here: [XXM-PairedAntibodyRepertoire] [4]  
 Antibody sequences will also be integrated to the Observed Antibody Space (OAS) database
 
-Welcome to a whole new antibody dimension! Yes, you too can be *PairPlex*!
+Welcome to a whole new antibody dimension! Yes, you too can be **PairPlex**!
 
 
 
-[1]: Li, Y., Huang, Z., Xu, L. et al. UDA-seq: universal droplet microfluidics-based combinatorial indexing for massive-scale multimodal single-cell sequencing. Nat Methods (2025). https://doi.org/10.1038/s41592-024-02586-y
-[2]: https://protocols.io/blablabla
-[3]: https://github.com/brineylab/pairplex
-[4]: Link-to-database
+[1]: Li, Y., Huang, Z., Xu, L. et al. UDA-seq: universal droplet microfluidics-based combinatorial indexing for massive-scale multimodal single-cell sequencing. Nat Methods (2025). https://doi.org/10.1038/s41592-024-02586-y  
+[2]: https://protocols.io/blablabla  
+[3]: https://github.com/brineylab/pairplex  
+[4]: Link-to-database  
 
 
 
@@ -65,10 +65,10 @@ Many options are available. Here's a quick overview:
 
 ## Citation
 If you are using Pairplex or the dataset generated of paired antibody sequences, please cite:
-```
-*Large-scale antibody repertoire leaves you PairPlex*
+
+**Large-scale antibody repertoire leaves you PairPlex**
 _some awesome people at the Briney lab_
 soon-to-be-published
 
-```
+
 
