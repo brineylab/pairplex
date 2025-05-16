@@ -31,14 +31,20 @@ from abutils.io import from_polars, list_files, make_dir, split_fastq, to_fasta
 from natsort import natsorted
 from tqdm.auto import tqdm
 
-from pairplex.utils import (
-    assign_bc_paralleled,
-    assign_bc_unparalleled,
-    get_barcode_file,
-    list_wells,
+# from pairplex.utils import (
+#     assign_bc_paralleled,
+#     assign_bc_unparalleled,
+#     get_barcode_file,
+#     list_wells,
+#     merge,
+#     process_cell,
+#     process_cell_pair,
+#     setup_logger,
+# )
+from .utils import (
+    get_builtin_whitelist,
     merge,
-    process_cell,
-    process_cell_pair,
+    partition_by_barcode,
     setup_logger,
 )
 
@@ -48,19 +54,22 @@ from pairplex.utils import (
 
 
 def main(
-    input_directory: str,
-    output_directory: str,
-    barcodes: str = "5prime",
-    enforce_bc_whitelist: bool = True,
-    sequencer: str = "element",
-    chunk_size: int = 100_000,
+    input_directory: str | Path,
+    project_directory: str | Path,
+    barcode_whitelist: str = "v2",
+    enforce_whitelist: bool = True,
+    tso_pattern: str = r"TTTCTTATATG{1,5}",
+    check_rc: bool = True,
+    sequencing_platform: str = "element",
+    chunksize: int = 100_000,
     n_processes: int | None = None,
     min_cluster_size: int = 3,
     min_umi_count: int = 2,
     consentroid: str = "consensus",
     only_pairs: bool = True,
     output_fmt: str = "tsv",
-    verbose: bool = False,
+    merge_paired_fastqs: bool = True,
+    quiet: bool = False,
     debug: bool = False,
 ):
     """PairPlex: DemultiPLEXing and PAIRing BCR sequences from combinatorial single-cellRNA sequencing experiments.
@@ -70,20 +79,28 @@ def main(
     input_directory : str
         Path to the folder containing the sequencing data.
 
-    output_directory : str
-        Path to the folder where the output will be saved.
+    project_directory : str
+        Path to the project directory into which outputs, logs, and metadata will be deposited.
 
-    barcodes : str
-        Name of the barcode file to use. Default is "5prime". Options are "5prime", "3prime", or 'v2'.
+    barcode_whitelist : str
+        Name of the barcode file to use. Default is "v2". Options are:
+          - ``"v2"``, which includes the 737K barcodes used in 10x Genomics NextGEM 5' v2 kits
+          - ``"v3"``, which includes the 3M barcodes used in 10x Genomics GEM-X 5' v3 kits
 
-    enforce_bc_whitelist : bool
+    enforce_whitelist : bool
         Whether to enforce the barcode whitelist. Default is True.
 
-    sequencer : str
+    tso_pattern : str = r"TTTCTTATATG{1,5}"
+        The pattern to search for the TSO sequence.
+
+    check_rc : bool = True
+        Whether to check the reverse complement of the sequences.
+
+    sequencing_platform : str
         Sequencer type. Default is "element". Options are "element" or "illumina".
 
-    chunk_size : int
-        Number of reads per chunk for parallel processing. Default is 100_000.
+    chunksize : int
+        Number of reads per chunk for parallel parsing of barcodes and UMIs. Default is 1000.
 
     n_processes : int | None
         Number of processes to use for parallel processing. Default is None (use all available cores).
@@ -103,8 +120,8 @@ def main(
     output_fmt : str
         Format of the output files. Default is "tsv". Options are "tsv" or "parquet".
 
-    verbose : bool
-        Whether to print verbose output. Default is False.
+    quiet : bool
+        Silences progress bars and other progress information. Default is False.
 
     debug : bool
         Whether to print debug output. Default is False.
@@ -112,104 +129,127 @@ def main(
 
     ###################### Pre-flight ######################
 
-    output_directory = Path(output_directory).resolve()
-    temp_directory = output_directory / "temp"
-    log_directory = output_directory / "00_logs"
-    output_directory.mkdir(parents=True, exist_ok=True)
+    input_directory = Path(input_directory).resolve()
+    project_directory = Path(project_directory).resolve()
+    temp_directory = project_directory / "temp"
+    log_directory = project_directory / "00_logs"
+    project_directory.mkdir(parents=True, exist_ok=True)
     temp_directory.mkdir(exist_ok=True)
     log_directory.mkdir(exist_ok=True)
 
     global logger
-    logger = setup_logger(log_directory, verbose, debug)
+    logger = setup_logger(log_directory, not quiet, debug)
     logger.info("====== Starting PairPlex pipeline ======")
 
     if n_processes is None:
         n_processes = mp.cpu_count()
-    if n_processes > mp.cpu_count():
-        # logger.warning(  # warning is the same as info in this case
-        logger.info(
-            f"Requested {n_processes} processes, but only {mp.cpu_count()} are available. Using {mp.cpu_count()} processes instead."
-        )
-        n_processes = mp.cpu_count()
+    else:
+        n_processes = min(mp.cpu_count(), max(n_processes, 1))
+    # if n_processes > mp.cpu_count():
+    #     # logger.warning(  # warning is the same as info in this case
+    #     logger.info(
+    #         f"Requested {n_processes} processes, but only {mp.cpu_count()} are available. Using {mp.cpu_count()} processes instead."
+    #     )
+    #     n_processes = mp.cpu_count()
 
     ###################### Pre-processing data ######################
     logger.info("=== Pre-processing data ===")
 
-    files = abutils.io.list_files(
+    input_files = abutils.io.list_files(
         str(input_directory),
         recursive=True,
         extension=["fastq.gz", "fq.gz", "fastq", "fq"],
     )
-    files = [f for f in files if "Unassigned" not in f]
+    input_files = [f for f in input_files if "Unassigned" not in f]
 
-    # TODO: this is a potential problem -- what if R2 is present in the sample name?
-    # example: DONOR2.fastq would trigger a merging attempt
-    # we should either make read merging an explicit argument or require paired-end reads (no processing of already-merged files)
-    # the first is probably better, because what if a new platform with 600bp+ single-end reads comes out?
-    # could make read merging `True` by default, so that the default behavior is compatible with current Illumina/Element read profiles
-    if any(("R2" in f) for f in files):
-        # Paired-end sequencing, requires merging
+    # # TODO: this is a potential problem -- what if R2 is present in one of the sample names?
+    # # example: an already-merged file called DONOR2.fastq would trigger a merging attempt
+    # # we should either make read merging an explicit argument or require paired-end reads (no processing of already-merged files)
+    # # the first is probably better, because what if a new platform with 600bp+ single-end reads comes out?
+    # # could make read merging `True` by default, so that the default behavior is compatible with current Illumina/Element read profiles
+    # if any(("R2" in f) for f in files):
+    if merge_paired_fastqs:
         merged_files = merge(
-            files=files,
-            output_folder=output_directory,
+            files=input_files,
+            output_folder=project_directory,
             log_folder=log_directory,
-            schema=sequencer,
-            verbose=verbose,
+            schema=sequencing_platform,
+            verbose=not quiet,
             debug=debug,
         )
     else:
-        merged_files = files
+        merged_files = input_files
+    merged_files = natsorted(merged_files)
 
     ###################### Assigning barcodes in wells ######################
-    wells = list_wells(merged_files, verbose=verbose, debug=debug)
 
-    barcoded_wells = {}
+    partition_directory = project_directory / "partitioned"
+    partition_directory.mkdir(exist_ok=True)
 
-    barcodes_path = get_barcode_file(barcodes)
-    if not os.path.exists(barcodes_path):
-        raise FileNotFoundError(f"Barcode file not found: {barcodes_path}")
-    logger.debug(f"Using barcode file: {barcodes_path}")
+    if barcode_whitelist is not None and not os.path.exists(barcode_whitelist):
+        barcode_whitelist = get_builtin_whitelist(barcode_whitelist)
 
-    for well in natsorted(wells):
-        fastq = wells[well]
+    partitioned_files = partition_by_barcode(
+        files=merged_files,
+        output_folder=partition_directory,
+        whitelist_path=barcode_whitelist,
+        enforce_whitelist=enforce_whitelist,
+        tso_pattern=tso_pattern,
+        check_rc=check_rc,
+        chunksize=chunksize,
+        quiet=quiet,
+        debug=debug,
+    )
 
-        # First, we split into chunks to parallelize
-        fastq_chunks = split_fastq(
-            prefix=well,
-            input_file=fastq,
-            output_dir=Path(temp_directory),
-            lines_per_chunk=4 * chunk_size,
-        )
+    # wells = list_wells(merged_files, verbose=verbose, debug=debug)
 
-        # Then, we assign barcodes/UMI and TSO for every chunk and concatenate results in a single file
-        if n_processes > 1:
-            n_processes_to_use = min(n_processes, len(fastq_chunks))
-            barcoded = assign_bc_paralleled(
-                well=well,
-                chunks=fastq_chunks,
-                barcodes_path=barcodes_path,
-                threads=n_processes_to_use,
-                output_folder=output_directory,
-                temp_folder=temp_directory,
-                enforce_bc_whitelist=enforce_bc_whitelist,
-                check_rc=True,
-                verbose=verbose,
-                debug=debug,
-            )
-        else:
-            barcoded = assign_bc_unparalleled(
-                well=well,
-                chunks=fastq_chunks,
-                barcodes_path=barcodes_path,
-                output_folder=output_directory,
-                temp_folder=temp_directory,
-                enforce_bc_whitelist=enforce_bc_whitelist,
-                check_rc=True,
-                verbose=verbose,
-                debug=debug,
-            )
+    # barcoded_wells = {}
 
-        barcoded_wells[well] = barcoded
+    # barcodes_path = get_barcode_file(barcodes)
+    # if not os.path.exists(barcodes_path):
+    #     raise FileNotFoundError(f"Barcode file not found: {barcodes_path}")
+    # logger.debug(f"Using barcode file: {barcodes_path}")
+
+    # for well in natsorted(wells):
+    #     fastq = wells[well]
+
+    #     # First, we split into chunks to parallelize
+    #     fastq_chunks = split_fastq(
+    #         prefix=well,
+    #         input_file=fastq,
+    #         output_dir=Path(temp_directory),
+    #         lines_per_chunk=4 * chunk_size,
+    #     )
+
+    #     # Then, we assign barcodes/UMI and TSO for every chunk and concatenate results in a single file
+    #     if n_processes > 1:
+    #         n_processes_to_use = min(n_processes, len(fastq_chunks))
+    #         barcoded = assign_bc_paralleled(
+    #             well=well,
+    #             chunks=fastq_chunks,
+    #             barcodes_path=barcodes_path,
+    #             threads=n_processes_to_use,
+    #             output_folder=output_directory,
+    #             temp_folder=temp_directory,
+    #             enforce_bc_whitelist=enforce_bc_whitelist,
+    #             check_rc=True,
+    #             verbose=verbose,
+    #             debug=debug,
+    #         )
+    #     else:
+    #         barcoded = assign_bc_unparalleled(
+    #             well=well,
+    #             chunks=fastq_chunks,
+    #             barcodes_path=barcodes_path,
+    #             output_folder=output_directory,
+    #             temp_folder=temp_directory,
+    #             enforce_bc_whitelist=enforce_bc_whitelist,
+    #             check_rc=True,
+    #             verbose=verbose,
+    #             debug=debug,
+    #         )
+
+    #     barcoded_wells[well] = barcoded
 
     ###################### Processing individual cells/droplets ######################
     logger.info("=== Generating BCR sequences for individual cells/droplets ===")
