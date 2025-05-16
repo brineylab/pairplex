@@ -283,6 +283,7 @@ def main(sequencing_folder: str = "./",
     wells_metadata = list_files('./test/04_metadata/', recursive=True, extension="csv")
     wells_metadata = [f for f in wells_metadata if 'checkpoint' not in f]
     well_to_files = {}
+
     for f in wells_metadata:
         m = re.search(r'([A-H][0-9]{1,2})_metadata\.csv$', f)
         if m:
@@ -296,6 +297,7 @@ def main(sequencing_folder: str = "./",
             pl.col("sequence_id").map_elements(lambda x: x.split('_')[1]).alias("contig_id"),
         ])
 
+        cells = df['cell_barcode'].unique()
         metadata_df = pl.read_csv(well_to_files[well]).to_pandas()
         pair_dicts = []
         unpaired_dicts = []
