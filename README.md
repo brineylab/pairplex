@@ -2,7 +2,7 @@
 Demultiplex single-cell antibody repertoires with native pairing.
 ---
 
-<img src="./pairplex/data/pairplex_logo.png" alt="PairPlex Logo" width="400"/>
+<img src="./pairplex/data/pairplex_logo_borders.png" alt="PairPlex Logo" width="400"/>
 
 Paired santibody sequences at high-throughput fr a fraction of the cost leaves you PairPlex? So were we!
 
