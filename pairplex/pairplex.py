@@ -17,10 +17,9 @@
 
 
 from abutils.io import list_files, make_dir, to_fasta
-from abutils import Pair
 from tqdm.auto import tqdm
 import abstar
-import os, shutil, time
+import os, shutil, time, argparse
 from natsort import natsorted
 from pathlib import Path
 import polars as pl
@@ -435,3 +434,43 @@ def main(sequencing_folder: str = "./",
     logger.info("Completely PairpPlexed!")
 
     return
+
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(description="PairPlex: DemultiPLEXing and PAIRing BCR sequences from combinatorial single-cellRNA sequencing experiments.")
+    parser.add_argument("--sequencing_folder", type=str, default="./", help="Path to the folder containing the sequencing data.")
+    parser.add_argument("--output_folder", type=str, default="./pairplexed/", help="Path to the folder where the output will be saved.")
+    parser.add_argument("--barcodes", type=str, default="5prime", help="Name of the barcode file to use. Default is '5prime'. Options are '5prime', '3prime', or 'v2'.")
+    parser.add_argument("--enforce_bc_whitelist", action='store_true', help="Whether to enforce the barcode whitelist. Default is True.")
+    parser.add_argument("--sequencer", type=str, default="element", help="Sequencer type. Default is 'element'. Options are 'element' or 'illumina'.")
+    parser.add_argument("--chunk_size", type=int, default=100_000, help="Number of reads per chunk for parallel processing. Default is 100_000.")
+    parser.add_argument("--threads", type=int, default=32, help="Number of threads to use for parallel processing. Default is 32.")
+    parser.add_argument("--min_cluster_size", type=int, default=3, help="Minimum number of reads to consider a cluster. Default is 3.")
+    parser.add_argument("--min_umi_count", type=int, default=2, help="Minimum UMI count to consider a chain as valid in a cluster. Default is 2.")
+    parser.add_argument("--consentroid", type=str, default="consensus", help="Type of consensus sequence to generate. Default is 'consensus'. Options are 'consensus' or 'centroid'.")
+    parser.add_argument("--only_pairs", action='store_true', help="Whether to only keep paired chains. Default is True.")
+    parser.add_argument("--output_fmt", type=str, default="tsv", help="Format of the output files. Default is 'tsv'. Options are 'tsv' or 'parquet'.")
+    parser.add_argument("--keep_intermediates", action='store_true', help="Whether to keep intermediate files. Default is False.")
+    parser.add_argument("--verbose", action='store_true', help="Whether to print verbose output. Default is False.")
+    parser.add_argument("--debug", action='store_true', help="Whether to print debug output. Default is False.")
+    args = parser.parse_args()
+
+    main(sequencing_folder=args.sequencing_folder,
+         output_folder=args.output_folder,
+         barcodes=args.barcodes,
+         enforce_bc_whitelist=args.enforce_bc_whitelist,
+         sequencer=args.sequencer,
+         chunk_size=args.chunk_size,
+         threads=args.threads,
+         min_cluster_size=args.min_cluster_size,
+         min_umi_count=args.min_umi_count,
+         consentroid=args.consentroid,
+         only_pairs=args.only_pairs,
+         output_fmt=args.output_fmt,
+         keep_intermediates=args.keep_intermediates,
+         verbose=args.verbose,
+         debug=args.debug
+        )
+    
