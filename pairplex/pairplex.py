@@ -26,7 +26,7 @@ import polars as pl
 from natsort import natsorted
 from tqdm.auto import tqdm
 
-# from .utils import parse_barcodes, process_droplet
+from .utils import parse_barcodes, process_droplet
 
 ######################################################
 ##                Main function                     ##
