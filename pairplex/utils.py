@@ -203,7 +203,7 @@ def parse_barcodes(
             sequence = s[36:].lstrip("G")  # remove any remaining Gs from the TSO
             barcode = s[:16]
             umi = s[16:26]
-            corrected = correct_barcode(barcode, whitelist, allowed_mismatches=1)
+            corrected = correct_barcode(barcode, whitelist)
             if corrected is None:
                 continue
             # build the record
