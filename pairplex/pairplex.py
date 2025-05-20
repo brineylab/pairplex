@@ -179,10 +179,19 @@ def run(
     # setup the main progress bar (tracks input file completion)
     main_pbar = tqdm(
         total=len(input_files),
-        desc="input files",
+        desc="pairplex",
         position=0,
         leave=True,
         dynamic_ncols=True,
+    )
+    running_total_printer = tqdm(
+        total=0, bar_format="\n{desc}\n", position=1, leave=False
+    )
+    all_valid_barcodes = 0
+    all_consensus_sequences = 0
+    all_pairs = 0
+    running_total_printer.set_description_str(
+        f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
     )
 
     # initialize the Process Pool
@@ -193,9 +202,9 @@ def run(
             to_delete = []
 
             # setup text printers (using tqdm so they get cleared once file is processed)
-            name_printer = tqdm(total=0, bar_format="{desc}", position=1, leave=False)
-            seqs_printer = tqdm(total=0, bar_format="{desc}", position=2, leave=False)
-            valids_printer = tqdm(total=0, bar_format="{desc}", position=3, leave=False)
+            name_printer = tqdm(total=0, bar_format="{desc}", position=2, leave=False)
+            seqs_printer = tqdm(total=0, bar_format="{desc}", position=3, leave=False)
+            valids_printer = tqdm(total=0, bar_format="{desc}", position=4, leave=False)
 
             # process the input file
             input_file = Path(input_file)
@@ -240,8 +249,12 @@ def run(
             )
             df = pl.read_parquet(concat_parquet)
             seqs_with_barcodes = df.shape[0]
+            all_valid_barcodes += seqs_with_barcodes
             valids_printer.set_description_str(
                 f"{seqs_with_barcodes} sequences with valid barcodes"
+            )
+            running_total_printer.set_description_str(
+                f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
             )
 
             # partition into separate parquet files by barcode
@@ -260,13 +273,13 @@ def run(
             # setup the consensus progress bar and printer
             consensus_pbar = tqdm(
                 total=len(partitions),
-                desc="consensus sequences",
-                position=4,
+                # desc="consensus sequences",
+                position=5,
                 leave=False,
                 dynamic_ncols=True,
             )
             consensus_printer = tqdm(
-                total=0, bar_format="{desc}", position=5, leave=False
+                total=0, bar_format="{desc}", position=6, leave=False
             )
 
             # make consensus sequences for each droplet
@@ -343,6 +356,10 @@ def run(
             unpaired_parquet_file = annotated_directory / f"{name}_unpaired.parquet"
             abutils.io.to_airr(sequences, str(unpaired_airr_file))
             abutils.io.to_parquet(sequences, str(unpaired_parquet_file))
+            all_consensus_sequences += len(sequences)
+            running_total_printer.set_description_str(
+                f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
+            )
 
             # paired sequences
             main_pbar.set_postfix_str("identifying pairs", refresh=True)
@@ -354,6 +371,11 @@ def run(
             pairs_printer.set_description_str(f"{len(pairs)} paired sequences")
             abutils.io.to_airr(pairs, str(paired_airr_file))
             abutils.io.to_parquet(pairs, str(paired_parquet_file))
+
+            all_pairs += len(pairs)
+            running_total_printer.set_description_str(
+                f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
+            )
 
             # --------------------
             #      cleanup
