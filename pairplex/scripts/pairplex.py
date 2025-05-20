@@ -20,11 +20,17 @@ from pathlib import Path
 import click
 
 from ..pairplex import run as run_pairplex
+from ..version import __version__
 
 
 @click.group()
 def cli():
     pass
+
+
+@cli.command()
+def version():
+    print(f"PairPlex v{__version__}")
 
 
 @cli.command()
