@@ -17,6 +17,7 @@
 
 import multiprocessing as mp
 import os
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -34,7 +35,7 @@ from .utils import parse_barcodes, process_droplet
 
 
 def run(
-    sequencing_directory: list[str | Path],
+    sequences: str | Path | list[str | Path],
     output_directory: str | Path,
     temp_directory: str | Path = "/tmp",
     whitelist_path: str | Path | None = None,
@@ -50,9 +51,71 @@ def run(
     quiet: bool = False,
     debug: bool = False,
 ) -> list:
-    """ """
+    """
+    Run PairPlex.
+
+    Parameters
+    ----------
+    sequences : str | Path | list[str | Path]
+        Path to the sequencing data or a list of paths. If a directory, all files in the directory will be processed
+        (recursively). If a file, only that file will be processed. If a list of paths, each path will be processed.
+
+    output_directory : str | Path
+        Path to the output directory. If it does not exist, it will be created.
+
+    temp_directory : str | Path
+        Path to the temporary directory. If it does not exist, it will be created.
+
+    whitelist_path : str | Path | None
+        Path to the whitelist file. If None, the default whitelist will be used.
+
+    platform : str
+        The sequencing platform used to generate the data. Options are "illumina" or "element".
+
+    clustering_threshold : float
+        The clustering threshold for the consensus sequences. For each droplet barcode (which potentially contains both
+        heavy and light chains), sequences are clustered by sequence similarity prior to consensus sequence generation
+        so that consensus sequences are separately generated for each antibody chain.
+
+    min_cluster_reads : int
+        The minimum number of reads to consider a cluster for consensus sequence generation. Clusters containing fewer
+        reads are discarded.
+
+    min_cluster_umis : int
+        The minimum number of UMIs to consider a cluster for consensus sequence generation. Clusters containing fewer
+        UMIs are discarded.
+
+    min_cluster_fraction : float
+        The minimum fraction of reads to consider a cluster for consensus sequence generation. Clusters containing fewer
+        reads than this fraction are discarded.
+
+    consensus_downsample : int
+        The number of sequences to downsample to for consensus sequence generation.
+
+    merge_paired_reads : bool
+        Whether to merge paired reads. If ``True``, i
+
+    receptor : str
+        The receptor to use. Options are "bcr" or "tcr".
+
+    germline_database : str
+        The germline database to use. Options are anything accepted by `abstar.run`, including
+        custom databases if available.
+
+    quiet : bool
+        Whether to suppress the progress bar and other update messages.
+
+    debug : bool
+        If ``True``, all temporary files will be retained to ease debugging.
+
+
+    Returns
+    -------
+    list
+        A list of paths to the output files.
+
+    """
     # setup directories
-    sequencing_directory = Path(sequencing_directory).resolve()
     output_directory = Path(output_directory).resolve()
     temp_directory = Path(temp_directory).resolve()
     log_directory = output_directory / "logs"
@@ -69,20 +132,33 @@ def run(
     annotated_directory.mkdir(parents=True, exist_ok=True)
 
     # process input files
-    input_files = abutils.io.list_files(
-        str(sequencing_directory),
-        recursive=True,
-        extension=[
-            "fastq.gz",
-            "fq.gz",
-            "fastq",
-            "fq",
-            "fasta.gz",
-            "fa.gz",
-            "fasta",
-            "fa",
-        ],
-    )
+    if isinstance(sequences, str | Path):
+        sequences = Path(sequences).resolve()
+        if sequences.is_dir():
+            input_files = abutils.io.list_files(
+                str(sequences),
+                recursive=True,
+                extension=[
+                    "fastq.gz",
+                    "fq.gz",
+                    "fastq",
+                    "fq",
+                    "fasta.gz",
+                    "fa.gz",
+                    "fasta",
+                    "fa",
+                ],
+            )
+        elif sequences.is_file():
+            input_files = [str(sequences)]
+        else:
+            raise FileNotFoundError(
+                f"string/path input must be a directory or file: {sequences}"
+            )
+    elif isinstance(sequences, list):
+        input_files = [str(Path(f).resolve()) for f in sequences]
+    else:
+        raise ValueError(f"Invalid input type: {type(sequences)}")
     input_files = [f for f in input_files if "Unassigned" not in f]
 
     # merge paired reads
@@ -117,21 +193,19 @@ def run(
             to_delete = []
 
             # setup text printers (using tqdm so they get cleared once file is processed)
-            name_printer = tqdm(total=0, bar_format="{desc}", position=3, leave=False)
-            seqs_printer = tqdm(total=0, bar_format="{desc}", position=4, leave=False)
-            valids_printer = tqdm(total=0, bar_format="{desc}", position=5, leave=False)
-            contig_printer = tqdm(total=0, bar_format="{desc}", position=7, leave=False)
-            pairs_printer = tqdm(total=0, bar_format="{desc}", position=8, leave=False)
+            name_printer = tqdm(total=0, bar_format="{desc}", position=1, leave=False)
+            seqs_printer = tqdm(total=0, bar_format="{desc}", position=2, leave=False)
+            valids_printer = tqdm(total=0, bar_format="{desc}", position=3, leave=False)
 
             # process the input file
             input_file = Path(input_file)
             name = input_file.stem
-            name_printer.set_description(f"---- {name} ----")
+            name_printer.set_description_str(f"---- {name} ----")
             # count sequences
             input_count = 0
             for s in abutils.io.parse_fastx(str(input_file)):
                 input_count += 1
-            seqs_printer.set_description(f"{input_count} input sequences")
+            seqs_printer.set_description_str(f"{input_count} input sequences")
 
             # split input file into chunks
             main_pbar.set_postfix_str("splitting input file", refresh=True)
@@ -166,7 +240,7 @@ def run(
             )
             df = pl.read_parquet(concat_parquet)
             seqs_with_barcodes = df.shape[0]
-            valids_printer.set_description(
+            valids_printer.set_description_str(
                 f"{seqs_with_barcodes} sequences with valid barcodes"
             )
 
@@ -183,13 +257,16 @@ def run(
             #      consensus
             # --------------------
 
-            # setup the consensus progress bar
+            # setup the consensus progress bar and printer
             consensus_pbar = tqdm(
                 total=len(partitions),
                 desc="consensus sequences",
-                position=6,
+                position=4,
                 leave=False,
                 dynamic_ncols=True,
+            )
+            consensus_printer = tqdm(
+                total=0, bar_format="{desc}", position=5, leave=False
             )
 
             # make consensus sequences for each droplet
@@ -210,7 +287,7 @@ def run(
                 futures.append(
                     executor.submit(
                         process_droplet,
-                        name=name,
+                        name=bc,
                         partition_df=bc_df,
                         **consensus_kwargs,
                     )
@@ -218,12 +295,20 @@ def run(
 
             # collect metadata
             metadata = []
+            droplet_count = 0
+            consensus_count = 0
             for future in as_completed(futures):
                 res = future.result()
                 if res is not None:
-                    metadata.append(res)
+                    metadata.extend(res)
+                    droplet_count += 1
+                    consensus_count += len([r for r in res if r["pass_filters"]])
                 consensus_pbar.update(1)
+                consensus_printer.set_description_str(
+                    f"{droplet_count} droplet barcodes | {consensus_count} consensus sequences"
+                )
             metadata_df = pl.DataFrame(metadata)
+            consensus_pbar.close()
 
             # write metadata to file
             metadata_file = metadata_directory / f"{name}.csv"
@@ -233,22 +318,24 @@ def run(
             consensus_file = consensus_directory / f"{name}.fasta"
             filtered_df = metadata_df.filter(pl.col("pass_filters"))
             with consensus_file.open("w") as f:
-                for name, consensus in zip(
+                for _name, _consensus in zip(
                     filtered_df["name"], filtered_df["consensus"]
                 ):
-                    f.write(f">{name}\n{consensus}\n")
-            contig_printer.set_description(
-                f"{filtered_df.shape[0]} consensus sequences"
+                    f.write(f">{_name}\n{_consensus}\n")
+            consensus_printer.set_description_str(
+                f"{droplet_count} droplet barcodes | {filtered_df.shape[0]} consensus sequences"
             )
 
             # --------------------
             #     annotation
             # --------------------
 
+            main_pbar.set_postfix_str("annotating sequences", refresh=True)
             sequences = abstar.run(
-                sequences=consensus_file,
+                sequences=str(consensus_file),
                 germline_database=germline_database,
                 receptor=receptor,
+                mmseqs_threads=1,
             )
 
             # unpaired sequences
@@ -258,11 +345,13 @@ def run(
             abutils.io.to_parquet(sequences, str(unpaired_parquet_file))
 
             # paired sequences
+            main_pbar.set_postfix_str("identifying pairs", refresh=True)
+            pairs_printer = tqdm(total=0, bar_format="{desc}", position=6, leave=False)
             paired_airr_file = annotated_directory / f"{name}_paired.tsv"
             paired_parquet_file = annotated_directory / f"{name}_paired.parquet"
             pairs = abutils.tl.assign_pairs(sequences, delim="_", delim_occurance=-1)
             pairs = [p for p in pairs if len(p.heavies) == 1 and len(p.lights) == 1]
-            pairs_printer.set_description(f"{len(pairs)} paired sequences")
+            pairs_printer.set_description_str(f"{len(pairs)} paired sequences")
             abutils.io.to_airr(pairs, str(paired_airr_file))
             abutils.io.to_parquet(pairs, str(paired_parquet_file))
 
@@ -270,7 +359,7 @@ def run(
             #      cleanup
             # --------------------
 
-            if debug:
+            if not debug:
                 main_pbar.set_postfix_str("cleaning up", refresh=True)
                 for f in to_delete:
                     if f is not None:
@@ -280,538 +369,14 @@ def run(
                     os.rmdir(temp_directory)
 
             # close out sub-progress bars
+            time.sleep(2)
             name_printer.close()
             seqs_printer.close()
             valids_printer.close()
-            contig_printer.close()
+            consensus_printer.close()
             pairs_printer.close()
 
             # update the main progress bar
             main_pbar.update(1)
 
     # return partition_files
-
-
-# def main(
-#     input_directory: str | Path,
-#     project_directory: str | Path,
-#     barcode_whitelist: str = "v2",
-#     enforce_whitelist: bool = True,
-#     tso_pattern: str = r"TTTCTTATATG{1,5}",
-#     check_rc: bool = True,
-#     sequencing_platform: str = "element",
-#     chunksize: int = 100_000,
-#     n_processes: int | None = None,
-#     min_cluster_size: int = 3,
-#     min_umi_count: int = 2,
-#     consentroid: str = "consensus",
-#     only_pairs: bool = True,
-#     output_fmt: str = "tsv",
-#     merge_paired_fastqs: bool = True,
-#     quiet: bool = False,
-#     debug: bool = False,
-# ):
-#     """PairPlex: DemultiPLEXing and PAIRing BCR sequences from combinatorial single-cellRNA sequencing experiments.
-
-#     Parameters
-#     ----------
-#     input_directory : str
-#         Path to the folder containing the sequencing data.
-
-#     project_directory : str
-#         Path to the project directory into which outputs, logs, and metadata will be deposited.
-
-#     barcode_whitelist : str
-#         Name of the barcode file to use. Default is "v2". Options are:
-#           - ``"v2"``, which includes the 737K barcodes used in 10x Genomics NextGEM 5' v2 kits
-#           - ``"v3"``, which includes the 3M barcodes used in 10x Genomics GEM-X 5' v3 kits
-
-#     enforce_whitelist : bool
-#         Whether to enforce the barcode whitelist. Default is True.
-
-#     tso_pattern : str = r"TTTCTTATATG{1,5}"
-#         The pattern to search for the TSO sequence.
-
-#     check_rc : bool = True
-#         Whether to check the reverse complement of the sequences.
-
-#     sequencing_platform : str
-#         Sequencer type. Default is "element". Options are "element" or "illumina".
-
-#     chunksize : int
-#         Number of reads per chunk for parallel parsing of barcodes and UMIs. Default is 1000.
-
-#     n_processes : int | None
-#         Number of processes to use for parallel processing. Default is None (use all available cores).
-
-#     min_cluster_size : int
-#         Minimum number of reads to consider a cluster. Default is 3.
-
-#     min_umi_count : int
-#         Minimum UMI count to consider a chain as valid in a cluster. Default is 2.
-
-#     consentroid : str
-#         Type of consensus sequence to generate. Default is "consensus". Options are "consensus" or "centroid".
-
-#     only_pairs : bool
-#         Whether to only keep paired chains. Default is True.
-
-#     output_fmt : str
-#         Format of the output files. Default is "tsv". Options are "tsv" or "parquet".
-
-#     quiet : bool
-#         Silences progress bars and other progress information. Default is False.
-
-#     debug : bool
-#         Whether to print debug output. Default is False.
-#     """
-
-#     ###################### Pre-flight ######################
-
-#     input_directory = Path(input_directory).resolve()
-#     project_directory = Path(project_directory).resolve()
-#     temp_directory = project_directory / "temp"
-#     log_directory = project_directory / "00_logs"
-#     project_directory.mkdir(parents=True, exist_ok=True)
-#     temp_directory.mkdir(exist_ok=True)
-#     log_directory.mkdir(exist_ok=True)
-
-#     global logger
-#     logger = setup_logger(log_directory, not quiet, debug)
-#     # logger.info("====== Starting PairPlex pipeline ======")
-
-#     if n_processes is None:
-#         n_processes = mp.cpu_count()
-#     else:
-#         n_processes = min(mp.cpu_count(), max(n_processes, 1))
-#     # if n_processes > mp.cpu_count():
-#     #     # logger.warning(  # warning is the same as info in this case
-#     #     logger.info(
-#     #         f"Requested {n_processes} processes, but only {mp.cpu_count()} are available. Using {mp.cpu_count()} processes instead."
-#     #     )
-#     #     n_processes = mp.cpu_count()
-
-#     ###################### Pre-processing data ######################
-#     logger.info("=== Pre-processing data ===")
-
-#     input_files = abutils.io.list_files(
-#         str(input_directory),
-#         recursive=True,
-#         extension=[
-#             "fastq.gz",
-#             "fq.gz",
-#             "fastq",
-#             "fq",
-#             "fasta.gz",
-#             "fa.gz",
-#             "fasta",
-#             "fa",
-#         ],
-#     )
-#     input_files = [f for f in input_files if "Unassigned" not in f]
-
-#     # # TODO: this is a potential problem -- what if R2 is present in one of the sample names?
-#     # # example: an already-merged file called DONOR2.fastq would trigger a merging attempt
-#     # # we should either make read merging an explicit argument or require paired-end reads (no processing of already-merged files)
-#     # # the first is probably better, because what if a new platform with 600bp+ single-end reads comes out?
-#     # # could make read merging `True` by default, so that the default behavior is compatible with current Illumina/Element read profiles
-#     # if any(("R2" in f) for f in files):
-#     if merge_paired_fastqs:
-#         merged_files = merge(
-#             files=input_files,
-#             output_folder=project_directory,
-#             log_folder=log_directory,
-#             schema=sequencing_platform,
-#             verbose=not quiet,
-#             debug=debug,
-#         )
-#     else:
-#         merged_files = input_files
-#     merged_files = natsorted(merged_files)
-
-#     ###################### Assigning barcodes in wells ######################
-
-#     partition_directory = project_directory / "partitioned"
-#     partition_directory.mkdir(exist_ok=True)
-
-#     if barcode_whitelist is not None and not os.path.exists(barcode_whitelist):
-#         barcode_whitelist = get_builtin_whitelist(barcode_whitelist)
-
-#     partitioned_files = partition_by_barcode(
-#         files=merged_files,
-#         output_folder=partition_directory,
-#         whitelist_path=barcode_whitelist,
-#         enforce_whitelist=enforce_whitelist,
-#         tso_pattern=tso_pattern,
-#         check_rc=check_rc,
-#         chunksize=chunksize,
-#         quiet=quiet,
-#         debug=debug,
-#     )
-
-#     # wells = list_wells(merged_files, verbose=verbose, debug=debug)
-
-#     # barcoded_wells = {}
-
-#     # barcodes_path = get_barcode_file(barcodes)
-#     # if not os.path.exists(barcodes_path):
-#     #     raise FileNotFoundError(f"Barcode file not found: {barcodes_path}")
-#     # logger.debug(f"Using barcode file: {barcodes_path}")
-
-#     # for well in natsorted(wells):
-#     #     fastq = wells[well]
-
-#     #     # First, we split into chunks to parallelize
-#     #     fastq_chunks = split_fastq(
-#     #         prefix=well,
-#     #         input_file=fastq,
-#     #         output_dir=Path(temp_directory),
-#     #         lines_per_chunk=4 * chunk_size,
-#     #     )
-
-#     #     # Then, we assign barcodes/UMI and TSO for every chunk and concatenate results in a single file
-#     #     if n_processes > 1:
-#     #         n_processes_to_use = min(n_processes, len(fastq_chunks))
-#     #         barcoded = assign_bc_paralleled(
-#     #             well=well,
-#     #             chunks=fastq_chunks,
-#     #             barcodes_path=barcodes_path,
-#     #             threads=n_processes_to_use,
-#     #             output_folder=output_directory,
-#     #             temp_folder=temp_directory,
-#     #             enforce_bc_whitelist=enforce_bc_whitelist,
-#     #             check_rc=True,
-#     #             verbose=verbose,
-#     #             debug=debug,
-#     #         )
-#     #     else:
-#     #         barcoded = assign_bc_unparalleled(
-#     #             well=well,
-#     #             chunks=fastq_chunks,
-#     #             barcodes_path=barcodes_path,
-#     #             output_folder=output_directory,
-#     #             temp_folder=temp_directory,
-#     #             enforce_bc_whitelist=enforce_bc_whitelist,
-#     #             check_rc=True,
-#     #             verbose=verbose,
-#     #             debug=debug,
-#     #         )
-
-#     #     barcoded_wells[well] = barcoded
-
-#     ###################### Processing individual cells/droplets ######################
-#     logger.info("=== Generating BCR sequences for individual cells/droplets ===")
-
-#     for well in barcoded_wells:
-#         start_time = time.time()
-
-#         if verbose or debug:
-#             logger.info(
-#                 f"[{well}] Processing cells from {barcoded_wells[well]['records']}"
-#             )
-
-#         well_contigs = []
-#         well_metadata = []
-
-#         cluster_folder = temp_directory / well
-#         cluster_folder.mkdir(exist_ok=True)
-
-#         df = pl.read_parquet(barcoded_wells[well]["records"])
-#         cells = df["barcode"].unique()
-
-#         if verbose:
-#             logger.info(f"[{well}] Found {len(cells)} cells")
-
-#         # Change the value of the clustering threshold here if needed
-#         clustering_threshold = 0.8
-
-#         if n_processes == 1:
-#             for cell in cells:
-#                 sequence_bin = df.filter(pl.col("barcode") == cell)
-#                 results = process_cell(
-#                     well=well,
-#                     cell=cell,
-#                     sequence_bin=sequence_bin,
-#                     cluster_folder=cluster_folder,
-#                     clustering_threshold=clustering_threshold,
-#                     min_cluster_size=min_cluster_size,
-#                     min_umi_count=min_umi_count,
-#                     consentroid=consentroid,
-#                     debug=debug,
-#                 )
-
-#                 well_contigs.extend(results["contigs"])
-#                 well_metadata.extend(results["metadata"])
-
-#         else:
-#             futures = []
-#             with ProcessPoolExecutor(
-#                 max_workers=n_processes,
-#                 mp_context=mp.get_context("fork"),
-#             ) as executor:
-#                 for cell in cells:
-#                     sequence_bin = df.filter(pl.col("barcode") == cell).to_pandas()
-#                     futures.append(
-#                         executor.submit(
-#                             process_cell,
-#                             well=well,
-#                             cell=cell,
-#                             sequence_bin=sequence_bin,
-#                             cluster_folder=cluster_folder,
-#                             clustering_threshold=clustering_threshold,
-#                             min_cluster_size=min_cluster_size,
-#                             min_umi_count=min_umi_count,
-#                             consentroid=consentroid,
-#                             debug=debug,
-#                         )
-#                     )
-
-#                 for future in tqdm(
-#                     as_completed(futures),
-#                     total=len(cells),
-#                     desc=f"[{well}] Processing cells",
-#                 ):
-#                     result = future.result()
-#                     well_contigs.extend(result["contigs"])
-#                     well_metadata.extend(result["metadata"])
-
-#         if not debug:
-#             # Clean up temporary files
-#             shutil.rmtree(cluster_folder)
-
-#         # Save contigs
-#         contig_folder = output_directory / "03_contigs"
-#         contig_folder.mkdir(exist_ok=True)
-#         contig_path = contig_folder / f"{well}_contigs.fasta"
-#         to_fasta(sequences=well_contigs, fasta_file=contig_path)
-#         if verbose:
-#             logger.debug(f"[{well}] Saved {len(well_contigs)} contigs to {contig_path}")
-
-#         # Save metadata
-#         metadata_folder = output_directory / "04_metadata"
-#         metadata_folder.mkdir(exist_ok=True)
-#         metadata_file = metadata_folder / f"{well}_metadata.csv"
-#         df_metadata = pd.DataFrame(well_metadata)
-#         df_metadata.to_csv(metadata_file, index=False)
-#         if verbose:
-#             logger.debug(f"[{well}] Metadata written to {metadata_file}")
-
-#         # Loggin elapsed time
-#         elapsed = time.time() - start_time
-#         minutes, seconds = divmod(int(elapsed), 60)
-#         logger.info(f"[{well}] Finished in {minutes:02d}:{seconds:02d} minutes")
-
-#     #
-#     # TODO: remove this section
-#     # better to just generate the contigs and metadata files and let the user run abstar themselves
-#     # they may want to run abstar with different parameters (custom germline database, etc.)
-#     #
-
-#     ###################### Running AbStar ######################
-#     logger.info("=== Running AbStar annotation ===")
-
-#     # Pre-flight
-#     abstar_folder = output_directory / "05_annotated"
-#     abstar_folder.mkdir(exist_ok=True)
-
-#     contig_fastas = list_files(contig_folder, recursive=True, extension="fasta")
-#     contig_fastas = [f for f in contig_fastas if "checkpoint" not in f]
-#     logger.info(f"Found {len(contig_fastas)} contig FASTA files to annotate.")
-
-#     # Run AbStar
-#     for file in contig_fastas:
-#         try:
-#             if verbose or debug:
-#                 logger.info(f"Annotating {file} with AbStar...")
-#             abstar.run(
-#                 sequences=file,
-#                 germline_database="human",
-#                 project_path=abstar_folder,
-#                 verbose=verbose,
-#                 debug=False,
-#             )
-#             if debug:
-#                 logger.debug(f"Finished annotation for {file}")
-#         except Exception as e:
-#             logger.error(f"AbStar failed on file {file}: {e}")
-#             continue
-
-#     logger.info("AbStar annotation completed.")
-
-#     ###################### Pairing chains ######################
-#     logger.info("=== Pairing chains  ===")
-
-#     # Create the pairs folder
-#     pairs_folder = output_directory / "06_pairs"
-#     pairs_folder.mkdir(exist_ok=True)
-
-#     wells_metadata = list_files(
-#         str(output_directory / "04_metadata"), recursive=True, extension="csv"
-#     )
-#     wells_metadata = [f for f in wells_metadata if "checkpoint" not in f]
-#     well_to_files = {}
-#     for f in wells_metadata:
-#         m = re.search(r"([A-H][0-9]{1,2})_metadata\.csv$", f)
-#         if m:
-#             well = m.group(1)
-#             well_to_files[well] = f
-
-#     for well in wells:
-#         df = pl.read_csv(
-#             os.path.join(abstar_folder, "airr", f"{well}_contigs.tsv"), separator="\t"
-#         )
-#         df = df.with_columns(
-#             [
-#                 pl.col("sequence_id")
-#                 .map_elements(lambda x: x.split("_")[0])
-#                 .alias("cell_barcode"),
-#                 pl.col("sequence_id")
-#                 .map_elements(lambda x: x.split("_")[1])
-#                 .alias("contig_id"),
-#             ]
-#         )
-
-#         cells = df["cell_barcode"].unique()
-#         pair_dicts = []
-
-#         if n_processes == 1:
-#             for cell in tqdm(cells):
-#                 cell_df = df.filter(pl.col("cell_barcode") == cell)
-
-#                 if len(cell_df) == 1:
-#                     # Only one contig, no pairing needed
-#                     if only_pairs:
-#                         # If we only want pairs, we skip this cell
-#                         continue
-#                     else:
-#                         # To-do
-#                         pass
-
-#                 elif len(cell_df) == 2:
-#                     # Two contigs, try to pair them
-#                     chain1 = cell_df.filter(pl.col("locus") == "IGH")
-#                     chain2 = cell_df.filter(pl.col("locus") != "IGH")
-
-#                     if len(chain1) == 1 and len(chain2) == 1:
-#                         # Pair the chains
-#                         heavy = from_polars(chain1)[0]
-#                         light = from_polars(chain2)[0]
-#                         for k in [
-#                             k for k in light.annotations.keys() if k.startswith("d")
-#                         ]:
-#                             light.annotations.pop(k)
-
-#                         # Gather the corresponding metadata
-#                         heavy_umi, heavy_reads = (
-#                             pl.read_csv(well_to_files[well])
-#                             .filter((pl.col("sequence_id") == heavy["sequence_id"]))[
-#                                 ["UMI_count", "reads"]
-#                             ]
-#                             .row(0)
-#                         )
-#                         light_umi, light_reads = (
-#                             pl.read_csv(well_to_files[well])
-#                             .filter((pl.col("sequence_id") == light["sequence_id"]))[
-#                                 ["UMI_count", "reads"]
-#                             ]
-#                             .row(0)
-#                         )
-
-#                         # Prepare the dictionary for the pair
-#                         pair_dict = {}
-#                         pair_dict["index"] = cell
-#                         for k, v in heavy.annotations.items():
-#                             pair_dict[k + ":1"] = v
-#                         pair_dict["umi:1"] = heavy_umi
-#                         pair_dict["reads:1"] = heavy_reads
-#                         for k, v in light.annotations.items():
-#                             pair_dict[k + ":2"] = v
-#                         pair_dict["umi:2"] = light_umi
-#                         pair_dict["reads:2"] = light_reads
-
-#                         pair_dicts.append(pair_dict)
-
-#                     else:
-#                         # If we have two contigs but they are not a pair (two heavy or two light chains), we need to decide what to do
-#                         if only_pairs:
-#                             continue
-#                         else:
-#                             # To-do
-#                             pass
-
-#                 elif len(cell_df) > 2:
-#                     # More than two contigs (doublets? or secondary recombination). We need to figure out what to do in this case
-#                     # For now, we will just skip this cell
-#                     # To-do
-#                     pass
-
-#         elif n_processes > 1:
-#             pairs_dicts = []
-#             with ProcessPoolExecutor(
-#                 max_workers=n_processes, mp_context=mp.get_context("spawn")
-#             ) as executor:
-#                 futures = [
-#                     executor.submit(
-#                         process_cell_pair,
-#                         cell,
-#                         df.filter(pl.col("cell_barcode") == cell).to_pandas(),
-#                         well_to_files[well],
-#                         only_pairs,
-#                     )
-#                     for cell in cells
-#                 ]
-
-#                 for future in tqdm(
-#                     as_completed(futures),
-#                     total=len(cells),
-#                     desc=f"[{well}] Pairing cells",
-#                 ):
-#                     result = future.result()
-#                     if result:
-#                         pairs_dicts.append(result)
-
-#         well_pairs = pl.DataFrame(pair_dicts)
-
-#         # Save pairs
-#         pairs_path = os.path.join(pairs_folder, f"{well}_pairs.tsv")
-#         well_pairs.write_csv(pairs_path, separator="\t")
-
-#         if verbose:
-#             logger.debug(f"[{well}] Saved {len(well_pairs)} pairs to {pairs_path}")
-
-#     ###################### Final generation of output files ######################
-#     logger.info("=== Generating final output  ===")
-
-#     # Create the final output folder
-#     final_output_folder = output_directory / "07_final"
-#     final_output_folder.mkdir(exist_ok=True)
-
-#     pair_files = list_files(pairs_folder, recursive=True, extension="tsv")
-#     wells = [os.path.basename(f).split("_")[0] for f in pair_files]
-
-#     dfs = []
-#     for well, file in zip(wells, pair_files):
-#         _df = pl.read_csv(file, separator="\t")
-#         _df = _df.with_columns(pl.lit(well).alias("well"))
-#         dfs.append(_df)
-
-#     # Concatenate all dataframes
-#     final_df = pl.concat(dfs)
-#     total_pairs = final_df.shape[0]
-
-#     if output_fmt == "parquet":
-#         final_df.write_parquet(os.path.join(final_output_folder, "all_pairs.parquet"))
-#         if verbose:
-#             logger.info(
-#                 f"Saved {total_pairs} pairs to {os.path.join(final_output_folder, 'all_pairs.parquet')}"
-#             )
-#     else:
-#         final_df.write_csv(
-#             os.path.join(final_output_folder, "all_pairs.tsv"), separator="\t"
-#         )
-#         if verbose:
-#             logger.info(
-#                 f"Saved {total_pairs} pairs to {os.path.join(final_output_folder, 'all_pairs.tsv')}"
-#             )
-
-#     return
