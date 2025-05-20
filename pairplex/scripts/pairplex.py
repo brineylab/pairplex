@@ -35,22 +35,72 @@ def version():
 
 @cli.command()
 @click.argument("sequences", type=click.Path(exists=True))
-@click.argument("--output-directory", type=click.Path())
-@click.option("--temp-directory", type=click.Path(), default="/tmp")
-@click.option("--whitelist-path", type=click.Path(), default=None)
+@click.argument("output_directory", type=click.Path())
 @click.option(
-    "--platform", type=click.Choice(["illumina", "element"]), default="illumina"
+    "--temp_directory",
+    type=click.Path(),
+    default="/tmp",
+    help="Temporary directory for intermediate files",
 )
-@click.option("--clustering-threshold", type=float, default=0.9)
-@click.option("--min-cluster-reads", type=int, default=3)
-@click.option("--min-cluster-umis", type=int, default=1)
-@click.option("--min-cluster-fraction", type=float, default=0.0)
-@click.option("--consensus-downsample", type=int, default=100)
-@click.option("--merge-paired-reads", is_flag=True)
-@click.option("--receptor", type=click.Choice(["bcr", "tcr"]), default="bcr")
-@click.option("--germline-database", type=str, default="human")
-@click.option("--quiet", is_flag=True)
-@click.option("--debug", is_flag=True)
+@click.option(
+    "--whitelist_path",
+    type=click.Path(),
+    default=None,
+    help="Path to the whitelist file or name of a built-in whitelist",
+)
+@click.option(
+    "--platform",
+    type=click.Choice(["illumina", "element"]),
+    default="illumina",
+    help="Sequencing platform",
+)
+@click.option(
+    "--clustering_threshold", type=float, default=0.9, help="Clustering threshold"
+)
+@click.option(
+    "--min_cluster_reads",
+    type=int,
+    default=3,
+    help="Minimum number of reads in a cluster",
+)
+@click.option(
+    "--min_cluster_umis",
+    type=int,
+    default=1,
+    help="Minimum number of UMIs in a cluster",
+)
+@click.option(
+    "--min_cluster_fraction",
+    type=float,
+    default=0.0,
+    help="Minimum fraction of reads in a cluster",
+)
+@click.option(
+    "--consensus_downsample",
+    type=int,
+    default=100,
+    help="Downsample when calculating consensus sequence",
+)
+@click.option(
+    "--merge_paired_reads",
+    is_flag=True,
+    help="Whether to merge paired reads, requires paired-end reads as input",
+)
+@click.option(
+    "--receptor", type=click.Choice(["bcr", "tcr"]), default="bcr", help="Receptor type"
+)
+@click.option(
+    "--germline_database",
+    type=str,
+    default="human",
+    help="Germline database for V(D)J assignment",
+)
+@click.option("--quiet", is_flag=True, help="Whether to suppress output")
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Whether to enable debug mode, which saves all temporary files to ease troubleshooting",
+)
 def run(
     sequences: str | Path,
     output_directory: str | Path,
