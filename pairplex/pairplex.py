@@ -184,9 +184,9 @@ def run(
         leave=True,
         dynamic_ncols=True,
     )
-    running_total_printer = tqdm(
-        total=0, bar_format="\n{desc}\n", position=1, leave=False
-    )
+    blank1_printer = tqdm(total=0, bar_format=" ", position=1, leave=True)
+    running_total_printer = tqdm(total=0, bar_format="{desc}", position=2, leave=True)
+    blank2_printer = tqdm(total=0, bar_format=" ", position=3, leave=True)
     all_valid_barcodes = 0
     all_consensus_sequences = 0
     all_pairs = 0
@@ -202,9 +202,9 @@ def run(
             to_delete = []
 
             # setup text printers (using tqdm so they get cleared once file is processed)
-            name_printer = tqdm(total=0, bar_format="{desc}", position=2, leave=False)
-            seqs_printer = tqdm(total=0, bar_format="{desc}", position=3, leave=False)
-            valids_printer = tqdm(total=0, bar_format="{desc}", position=4, leave=False)
+            name_printer = tqdm(total=0, bar_format="{desc}", position=4, leave=False)
+            seqs_printer = tqdm(total=0, bar_format="{desc}", position=5, leave=False)
+            valids_printer = tqdm(total=0, bar_format="{desc}", position=6, leave=False)
 
             # process the input file
             input_file = Path(input_file)
@@ -274,12 +274,12 @@ def run(
             consensus_pbar = tqdm(
                 total=len(partitions),
                 # desc="consensus sequences",
-                position=5,
+                position=7,
                 leave=False,
                 dynamic_ncols=True,
             )
             consensus_printer = tqdm(
-                total=0, bar_format="{desc}", position=6, leave=False
+                total=0, bar_format="{desc}", position=8, leave=False
             )
 
             # make consensus sequences for each droplet
@@ -363,7 +363,7 @@ def run(
 
             # paired sequences
             main_pbar.set_postfix_str("identifying pairs", refresh=True)
-            pairs_printer = tqdm(total=0, bar_format="{desc}", position=6, leave=False)
+            pairs_printer = tqdm(total=0, bar_format="{desc}", position=9, leave=False)
             paired_airr_file = annotated_directory / f"{name}_paired.tsv"
             paired_parquet_file = annotated_directory / f"{name}_paired.parquet"
             pairs = abutils.tl.assign_pairs(sequences, delim="_", delim_occurance=-1)
