@@ -16,27 +16,14 @@
 
 
 import logging
-import multiprocessing as mp
 import os
-import re
-
-from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Set
 
 import abutils
-import pandas as pd
 import polars as pl
-from abstar.preprocess import merging
-from abutils import Sequence
 
-from abutils.io import from_pandas, from_polars, make_dir, parse_fastx
-from abutils.tools import cluster
-from natsort import natsorted
-from tqdm.auto import tqdm
-
-BARCODE_DIR = Path("./barcodes/")
+BARCODE_DIR = Path(__file__).resolve().parent / "barcodes"
 DEFAULT_WHITELIST = BARCODE_DIR / "737K-august-2016.txt"
 
 
@@ -70,75 +57,7 @@ def setup_logger(output_folder: str, verbose: bool, debug: bool) -> logging.Logg
     return logger
 
 
-def merge(
-    files: list,
-    output_folder: str,
-    log_folder: str,
-    schema: str,
-    verbose: bool,
-    debug: bool,
-) -> list:
-    """Quick and dirty adapter to leverage merging wrapper from AbStar. Uses Fastp."""
-
-    global logger
-
-    assert isinstance(files, list), "Incorrect list of files to merge. Aborting."
-    assert files != [], "List of files to merge is empty. Aborting"
-
-    merge_dir = os.path.join(output_folder, "01_merged")
-    log = os.path.join(log_folder, "merging")
-    make_dir(merge_dir)
-
-    logging.info(f"Merging of {len(files)} files into {merge_dir}")
-
-    merged_files = merging.merge_fastqs(
-        files=files,
-        output_folder=merge_dir,
-        output_format="fastq",
-        log_directory=log,
-        schema=schema,
-        algo="fastp",
-        binary_path=None,
-        merge_args=None,
-        minimum_overlap=30,
-        allowed_mismatches=5,
-        allowed_mismatch_percent=20.0,
-        trim_adapters=True,
-        adapter_file=None,
-        quality_trim=True,
-        window_size=4,
-        quality_cutoff=20,
-        interleaved=False,
-        compress_output=False,
-        debug=False,
-        show_progress=debug,
-    )
-    return merged_files
-
-
-def list_wells(merged_files: list, verbose: bool, debug: bool) -> dict:
-    """Match input files to wells (e.g., A1, B9) and return mapping."""
-    global logger
-
-    well_to_files = {}
-
-    for f in merged_files:
-        match = re.search(r"VDJ_([A-H][0-9]{1,2})\.fastq", f)
-        if match:
-            well = match.group(1)
-            well_to_files[well] = f
-
-    if any([verbose, debug]):
-        logger.info(f"Found {len(well_to_files)} wells")
-    if debug:
-        sorted_wells = natsorted(well_to_files)
-        for well in sorted_wells:
-            logger.debug(f"Well {well}: {well_to_files[well]}")
-
-    return well_to_files
-
-
-def get_builtin_whitelist(whitelist_name: str) -> str:
+def get_whitelist_path(whitelist_name: str) -> str:
     """Get the path to a builtin barcode whitelist."""
     builtin_whitelists = {
         "v2": BARCODE_DIR / "737K-august-2016.txt",
@@ -156,12 +75,15 @@ def get_builtin_whitelist(whitelist_name: str) -> str:
         "nextgem": BARCODE_DIR / "737K-august-2016.txt",
         "gemx": BARCODE_DIR / "3M-5pgex-jan-2023.txt",
     }
-    if whitelist_name.lower() not in builtin_whitelists:
-        raise ValueError(f"Invalid whitelist name: {whitelist_name}")
-    return builtin_whitelists[whitelist_name.lower()]
+    if whitelist_name.lower() in builtin_whitelists:
+        return builtin_whitelists[whitelist_name.lower()]
+    elif Path(whitelist_name).exists():
+        return Path(whitelist_name)
+    else:
+        raise ValueError(f"Invalid whitelist name or path: {whitelist_name}")
 
 
-def load_barcode_whitelist(whitelist_path: str) -> Set[str]:
+def load_barcode_whitelist(whitelist_path: str | Path) -> Set[str]:
     """
     Load a barcode whitelist from a file and return a set of barcodes.
 
@@ -267,6 +189,8 @@ def parse_barcodes(
     output_name = input_file.stem
     if whitelist_path is None:
         whitelist_path = DEFAULT_WHITELIST
+    else:
+        whitelist_path = get_whitelist_path(whitelist_path)
     whitelist = load_barcode_whitelist(whitelist_path)
 
     records = []
@@ -279,7 +203,7 @@ def parse_barcodes(
             sequence = s[36:].lstrip("G")  # remove any remaining Gs from the TSO
             barcode = s[:16]
             umi = s[16:26]
-            corrected = correct_barcode(barcode, whitelist, allowed_mismatches=1)
+            corrected = correct_barcode(barcode, whitelist)
             if corrected is None:
                 continue
             # build the record
@@ -301,74 +225,6 @@ def parse_barcodes(
         df = pl.DataFrame(records)
         df.write_parquet(output_file)
         return str(output_file)
-
-
-def process_droplets(
-    partition_files: list[str | Path],
-    output_directory: str | Path,
-    temp_directory: str | Path,
-    clustering_threshold: float = 0.85,
-    consensus_downsample: int = 100,
-    min_cluster_reads: int = 3,
-    min_cluster_umis: int = 2,
-    n_processes: int | None = None,
-    quiet: bool = False,
-    debug: bool = False,
-) -> dict:
-    """Process PairPlex droplets to cluster sequences and generate contigs."""
-
-    output_directory = Path(output_directory).resolve()
-    temp_directory = Path(temp_directory).resolve()
-    temp_directory.mkdir(parents=True, exist_ok=True)
-
-    output_directory = output_directory / "metadata"
-    output_directory.mkdir(parents=True, exist_ok=True)
-    output_dict = defaultdict(list)
-
-    if n_processes is None:
-        n_processes = mp.cpu_count()
-    n_processes = min(len(partition_files), max(n_processes, 1))
-
-    # process droplets
-    pbar = tqdm(
-        total=len(partition_files),
-        desc="Processing droplets",
-        disable=quiet,
-    )
-    droplet_kwargs = {
-        "temp_directory": temp_directory,
-        "clustering_threshold": clustering_threshold,
-        "consensus_downsample": consensus_downsample,
-        "min_cluster_reads": min_cluster_reads,
-        "min_cluster_umis": min_cluster_umis,
-        "quiet": quiet,
-        "debug": debug,
-    }
-    with ProcessPoolExecutor(
-        max_workers=n_processes,
-        mp_context=mp.get_context("spawn"),
-    ) as executor:
-        futures = [
-            executor.submit(process_droplet, partition_file, **droplet_kwargs)
-            for partition_file in partition_files
-        ]
-
-    # collect results
-    for future in as_completed(futures):
-        sample_name, metadata = future.result()
-        output_dict[sample_name].extend(metadata)
-        pbar.update(1)
-    pbar.close()
-
-    # write results
-    output_files = []
-    for sample_name, metadata in output_dict.items():
-        metadata_file = output_directory / f"{sample_name}.csv"
-        df = pl.DataFrame(metadata)
-        df.write_csv(metadata_file)
-        output_files.append(metadata_file)
-
-    return output_files
 
 
 def process_droplet(
@@ -442,7 +298,7 @@ def process_droplet(
         cluster_fraction = clust.size / len(sequences)
 
         # consensus
-        if cluster.size > 1:
+        if clust.size > 1:
             consensus = abutils.tl.make_consensus(
                 clust.sequences,
                 downsample_to=consensus_downsample,

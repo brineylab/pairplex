@@ -1,3 +1,6 @@
-abutils>=0.4.14
-pandas
-polars>=1.6
+abstar>=0.7.3
+abutils>=0.5.3
+click
+natsort
+polars
+tqdm
