@@ -1,5 +1,5 @@
-abstar>=0.7.2
-abutils>=0.5.2
+abstar>=0.7.3
+abutils>=0.5.3
 click
 natsort
 polars
