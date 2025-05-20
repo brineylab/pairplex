@@ -174,3 +174,4 @@ cython_debug/
 .pypirc
 pairplex/utils.py.bak
 pairplex/pairplex.py.bak
+.DS_Store
