@@ -17,6 +17,7 @@
 
 import logging
 import os
+import gzip
 from pathlib import Path
 from typing import Set
 
@@ -63,19 +64,19 @@ def get_whitelist_path(whitelist_name: str) -> str:
     """Get the path to a builtin barcode whitelist."""
     builtin_whitelists = {
         "v2": BARCODE_DIR / "737K-august-2016.txt",
-        "v3": BARCODE_DIR / "3M-5pgex-jan-2023.txt",
+        "v3": BARCODE_DIR / "3M-5pgex-jan-2023.txt.gz",
         "5v2": BARCODE_DIR / "737K-august-2016.txt",
-        "5v3": BARCODE_DIR / "3M-5pgex-jan-2023.txt",
+        "5v3": BARCODE_DIR / "3M-5pgex-jan-2023.txt.gz",
         "5pv2": BARCODE_DIR / "737K-august-2016.txt",
-        "5pv3": BARCODE_DIR / "3M-5pgex-jan-2023.txt",
+        "5pv3": BARCODE_DIR / "3M-5pgex-jan-2023.txt.gz",
         "5primev2": BARCODE_DIR / "737K-august-2016.txt",
-        "5primev3": BARCODE_DIR / "3M-5pgex-jan-2023.txt",
+        "5primev3": BARCODE_DIR / "3M-5pgex-jan-2023.txt.gz",
         "5'v2": BARCODE_DIR / "737K-august-2016.txt",
-        "5'v3": BARCODE_DIR / "3M-5pgex-jan-2023.txt",
+        "5'v3": BARCODE_DIR / "3M-5pgex-jan-2023.txt.gz",
         "737k": BARCODE_DIR / "737K-august-2016.txt",
-        "3m": BARCODE_DIR / "3M-5pgex-jan-2023.txt",
+        "3m": BARCODE_DIR / "3M-5pgex-jan-2023.txt.gz",
         "nextgem": BARCODE_DIR / "737K-august-2016.txt",
-        "gemx": BARCODE_DIR / "3M-5pgex-jan-2023.txt",
+        "gemx": BARCODE_DIR / "3M-5pgex-jan-2023.txt.gz",
     }
     if whitelist_name.lower() in builtin_whitelists:
         return builtin_whitelists[whitelist_name.lower()]
@@ -108,7 +109,13 @@ def load_barcode_whitelist(whitelist_path: str | Path) -> Set[str]:
     whitelist_path = Path(whitelist_path)
     if not whitelist_path.exists():
         raise FileNotFoundError(f"Barcode whitelist file not found: {whitelist_path}")
-    with whitelist_path.open() as f:
+    
+    if whitelist_path.suffix == ".gz":
+        opener = lambda p: gzip.open(p, "rt")
+    else:
+        opener = lambda p: open(p, "r")
+
+    with opener(whitelist_path) as f:
         return set(line.strip() for line in f)
 
 
