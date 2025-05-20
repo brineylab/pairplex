@@ -23,6 +23,8 @@ from typing import Set
 import abutils
 import polars as pl
 
+from .version import __version__
+
 BARCODE_DIR = Path(__file__).resolve().parent / "barcodes"
 DEFAULT_WHITELIST = BARCODE_DIR / "737K-august-2016.txt"
 
@@ -331,3 +333,24 @@ def process_droplet(
         metadata.append(meta)
 
     return metadata
+
+
+def print_splash(include_version: bool = True) -> None:
+    """Print the splash screen."""
+
+    print(PAIRPLEX_LOGO)
+    if include_version:
+        print(f"v{__version__}")
+    print("Copyright (c) 2025 Benjamin Nemoz")
+    print("Distributed under the terms of the MIT License.")
+    print("")
+
+
+PAIRPLEX_LOGO = """
+ ______       _       ______  _              
+(_____ \     (_)     (_____ \| |             
+ _____) )____ _  ____ _____) ) | _____ _   _ 
+|  ____(____ | |/ ___)  ____/| || ___ ( \ / )
+| |    / ___ | | |   | |     | || ____|) X ( 
+|_|    \_____|_|_|   |_|      \_)_____|_/ \_)
+"""

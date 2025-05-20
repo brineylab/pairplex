@@ -27,7 +27,7 @@ import polars as pl
 from natsort import natsorted
 from tqdm.auto import tqdm
 
-from .utils import parse_barcodes, process_droplet
+from .utils import parse_barcodes, print_splash, process_droplet
 
 ######################################################
 ##                Main function                     ##
@@ -115,6 +115,11 @@ def run(
         A list of paths to the output files.
 
     """
+
+    # print splash screen
+    if not quiet:
+        print_splash(include_version=True)
+
     # setup directories
     output_directory = Path(output_directory).resolve()
     temp_directory = Path(temp_directory).resolve()
