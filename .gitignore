@@ -173,3 +173,5 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 .DS_Store
+pairplex/utils.py.bak
+pairplex/pairplex.py.bak
