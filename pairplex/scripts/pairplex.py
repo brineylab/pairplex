@@ -19,6 +19,7 @@ from pathlib import Path
 
 import click
 
+from ..make_fastq import make_fastq as make_fastq_pairplex
 from ..pairplex import run as run_pairplex
 from ..version import __version__
 
@@ -134,4 +135,37 @@ def run(
         germline_database=germline_database,
         quiet=quiet,
         debug=debug,
+    )
+
+
+
+
+@cli.command()
+@click.argument(
+    "sequencing_folder", 
+    type=click.Path(exists=True)
+    )
+
+@click.argument(
+    "output_directory", 
+    type=click.Path()
+    )
+
+@click.option(
+    "--platform",
+    type=click.Choice(["illumina", "element"]),
+    default="illumina",
+    help="Sequencing platform",
+)
+
+def make_fastq(
+    sequencing_folder: str | Path,
+    output_directory: str | Path,
+    platform: str,
+):
+    
+    make_fastq_pairplex(
+        sequencing_folder=sequencing_folder,
+        output_directory=output_directory,
+        platform=platform,
     )
