@@ -1,3 +1,5 @@
+![](https://img.shields.io/badge/license-MIT-blue.svg)
+
 # PairPlex
 Demultiplex single-cell antibody repertoires with native pairing.
 ---
