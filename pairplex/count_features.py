@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with PairPlex. If not, see <http://www.gnu.org/licenses/>.
 
-
+from pathlib import Path
 
 def count_features(
     sequencing_folder: str | Path,
@@ -33,3 +33,5 @@ def count_features(
         platform (str): Sequencing platform.
         debug (bool): Whether to enable debug mode, which saves all temporary files to ease troubleshooting.
     """
+
+    return
