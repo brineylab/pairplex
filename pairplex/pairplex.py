@@ -174,8 +174,8 @@ def run(
         merge_log_directory.mkdir(parents=True, exist_ok=True)
         input_files = abstar.pp.merge_fastqs(
             files=input_files,
-            output_folder=merge_directory,
-            log_folder=merge_log_directory,
+            output_directory=merge_directory,
+            log_directory=merge_log_directory,
             schema=platform.lower(),
             debug=debug,
             show_progress=False,

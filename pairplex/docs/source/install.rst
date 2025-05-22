@@ -30,7 +30,7 @@ To install PairPlex, follow these steps:
    ```
 4. Verify the installation by running the following command:
    ```bash
-   pairplex --version
+   pairplex version
    ```
    This should display the version of PairPlex installed.
 
@@ -51,7 +51,7 @@ If you are willing to install from the source, you can clone the repository and 
     ```
 4. Verify the installation by running the following command:
     ```bash
-    pairplex --version
+    pairplex version
     ```
     This should display the version of PairPlex installed.
 
