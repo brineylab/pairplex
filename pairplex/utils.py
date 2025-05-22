@@ -17,7 +17,6 @@
 
 import logging
 import os
-import gzip
 from pathlib import Path
 from typing import Set
 
@@ -30,37 +29,37 @@ BARCODE_DIR = Path(__file__).resolve().parent / "barcodes"
 DEFAULT_WHITELIST = BARCODE_DIR / "737K-august-2016.txt"
 
 
-def setup_logger(output_folder: str, verbose: bool, debug: bool) -> logging.Logger:
-    """Set up a logger with proper formatting and both file and console handlers."""
+# def setup_logger(output_folder: str, verbose: bool, debug: bool) -> logging.Logger:
+#     """Set up a logger with proper formatting and both file and console handlers."""
 
-    logger = logging.getLogger("PairPlex")
-    if debug:
-        logger.setLevel(logging.DEBUG)
-    else:
-        logger.setLevel(logging.INFO)
+#     logger = logging.getLogger("PairPlex")
+#     if debug:
+#         logger.setLevel(logging.DEBUG)
+#     else:
+#         logger.setLevel(logging.INFO)
 
-    # Clear existing handlers
-    if logger.hasHandlers():
-        logger.handlers.clear()
+#     # Clear existing handlers
+#     if logger.hasHandlers():
+#         logger.handlers.clear()
 
-    log_path = os.path.join(output_folder, "pairplex.log")
-    file_handler = logging.FileHandler(log_path)
-    file_handler.setLevel(logging.DEBUG)
+#     log_path = os.path.join(output_folder, "pairplex.log")
+#     file_handler = logging.FileHandler(log_path)
+#     file_handler.setLevel(logging.DEBUG)
 
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
+#     console_handler = logging.StreamHandler()
+#     console_handler.setLevel(logging.INFO)
 
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
+#     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+#     file_handler.setFormatter(formatter)
+#     console_handler.setFormatter(formatter)
 
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
+#     logger.addHandler(file_handler)
+#     logger.addHandler(console_handler)
 
-    return logger
+#     return logger
 
 
-def get_whitelist_path(whitelist_name: str) -> str:
+def get_whitelist_path(whitelist_name: str | Path) -> str | Path:
     """Get the path to a builtin barcode whitelist."""
     builtin_whitelists = {
         "v2": BARCODE_DIR / "737K-august-2016.txt",
@@ -78,8 +77,10 @@ def get_whitelist_path(whitelist_name: str) -> str:
         "nextgem": BARCODE_DIR / "737K-august-2016.txt",
         "gemx": BARCODE_DIR / "3M-5pgex-jan-2023.txt.gz",
     }
-    if whitelist_name.lower() in builtin_whitelists:
+    # Check if it's a string that corresponds to a built-in whitelist
+    if isinstance(whitelist_name, str) and whitelist_name.lower() in builtin_whitelists:
         return builtin_whitelists[whitelist_name.lower()]
+    # Check if it's a path or a string path that exists
     elif Path(whitelist_name).exists():
         return Path(whitelist_name)
     else:
@@ -109,13 +110,7 @@ def load_barcode_whitelist(whitelist_path: str | Path) -> Set[str]:
     whitelist_path = Path(whitelist_path)
     if not whitelist_path.exists():
         raise FileNotFoundError(f"Barcode whitelist file not found: {whitelist_path}")
-    
-    if whitelist_path.suffix == ".gz":
-        opener = lambda p: gzip.open(p, "rt")
-    else:
-        opener = lambda p: open(p, "r")
-
-    with opener(whitelist_path) as f:
+    with open(whitelist_path) as f:
         return set(line.strip() for line in f)
 
 
@@ -154,6 +149,7 @@ def correct_barcode(
     # return the corrected barcode only if a single matching mutant is found
     if len(matches) == 1:
         return matches[0]
+    return None  # Explicitly return None if no single correction is found
 
 
 def parse_barcodes(
@@ -247,17 +243,17 @@ def process_droplet(
     min_cluster_fraction: float = 0.0,
     quiet: bool = False,
     debug: bool = False,
-) -> tuple[str, list[dict]]:
+) -> list[dict]:
     """
     Process a single droplet to generate contigs.
 
     Parameters
     ----------
-    partition_file : str | Path
-        The path to the partition file.
+    name : str
+        Name of the droplet, typically containing the barcode.
 
-    output_directory : str | Path
-        The path to the output directory.
+    partition_df : pl.DataFrame
+        DataFrame containing sequences from a single partition (droplet).
 
     temp_directory : str | Path
         The path to the temporary directory.
@@ -285,9 +281,8 @@ def process_droplet(
 
     Returns
     -------
-    tuple[str, list[dict]]
-        A tuple containing the sample name and metadata (including consensus sequence).
-
+    list[dict]
+        A list of dictionaries containing metadata for each cluster/contig.
     """
 
     temp_directory = Path(temp_directory)
