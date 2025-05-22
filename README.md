@@ -47,12 +47,16 @@ git clone https://github.com/brineylab/pairplex
 cd pairplex
 pip install ./
 ```
+##### Verify installation
+Verifying correct installation can be done by checking the version. In the Terminal interface, use:
+`pairplex --version`
+The version number should be returned
 
 ## Usage
 PairPlex can be used from the CLI or from the Python API
 
 ##### CLI
-`pairplex ...`
+`pairplex run ...`
 
 ##### API
 ```
@@ -69,9 +73,9 @@ Many options are available. Here's a quick overview:
 ## Citation
 If you are using Pairplex or the dataset generated of paired antibody sequences, please cite:
 
-**Large-scale antibody repertoire leaves you PairPlex**
-_some awesome people at the Briney lab_
-soon-to-be-published
+**Large-scale antibody repertoire leaves you PairPlex**  
+_some awesome people at the Briney lab_  
+soon-to-be-published  
 
 
 

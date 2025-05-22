@@ -19,6 +19,8 @@ from pathlib import Path
 
 import click
 
+from ..make_fastq import make_fastq as make_fastq_pairplex
+from ..count_features import count_features as count_features_pairplex
 from ..pairplex import run as run_pairplex
 from ..version import __version__
 
@@ -133,5 +135,90 @@ def run(
         receptor=receptor,
         germline_database=germline_database,
         quiet=quiet,
+        debug=debug,
+    )
+
+
+
+
+
+@cli.command()
+@click.argument("sequencing_folder", type=click.Path(exists=True))
+@click.argument("output_directory", type=click.Path())
+
+@click.option(
+    "--samplesheet",
+    type=click.Path(),
+    default=None,
+    help="Path to the samplesheet file (CSV or YAML)",
+)
+@click.option(
+    "--platform",
+    type=click.Choice(["illumina", "element"]),
+    default="illumina",
+    help="Sequencing platform",
+)
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Whether to enable debug mode, which saves all temporary files to ease troubleshooting",
+)
+
+def make_fastq(
+    sequencing_folder: str | Path,
+    output_directory: str | Path,
+    samplesheet: str | Path | None,
+    platform: str,
+    debug: bool,
+):
+    
+    make_fastq_pairplex(
+        sequencing_folder=sequencing_folder,
+        output_directory=output_directory,
+        samplesheet=samplesheet,
+        platform=platform,
+        debug=debug,
+    )
+
+
+
+
+
+@cli.command()
+@click.argument("sequencing_folder", type=click.Path(exists=True))
+@click.argument("output_directory", type=click.Path())
+@click.option(
+    "--samplesheet",
+    type=click.Path(),
+    default=None,
+    help="Path to the samplesheet file (CSV or YAML)",
+)
+@click.option(
+    "--platform",
+    type=click.Choice(["illumina", "element"]),
+    default="illumina",
+    help="Sequencing platform",
+)
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Whether to enable debug mode, which saves all temporary files to ease troubleshooting",
+)
+
+def count_features(
+    sequencing_folder: str | Path,
+    output_directory: str | Path,
+    samplesheet: str | Path | None,
+    platform: str,
+    debug: bool,
+):
+    
+    count_features_pairplex(
+        sequencing_folder=sequencing_folder,
+        output_directory=output_directory,
+        samplesheet=samplesheet,
+        platform=platform,
         debug=debug,
     )
