@@ -1,3 +1,4 @@
+[![tests](https://github.com/briney/pairplex/actions/workflows/pytest.yml/badge.svg)](https://github.com/briney/pairplex/actions/workflows/pytest.yml)
 ![](https://img.shields.io/badge/license-MIT-blue.svg)
 
 # PairPlex
