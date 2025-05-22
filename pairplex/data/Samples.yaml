@@ -1,0 +1,41 @@
+# THis is a quick YAML file that allows to rapidly identify samples with well barcodes
+# This will be automatically converted to a CSV file adapted to the sample sheet format of the sequencer
+
+# Data
+project_name: "ProjectName"
+project_description: "ProjectDescription"
+project_date: "2023-10-01"
+project_investigator: "InvestigatorName"
+
+# Samples
+samples:
+  - sample_id: "Sample1"
+    sample_name: "SampleName1"
+    sample_description: "Description of Sample 1"
+    well_barcode: "A1"
+    index_1: "ATCGATCG"
+    index_2: "GCTAGCTA"
+   
+  - sample_id: "Sample2"
+    sample_name: "SampleName2"
+    sample_description: "Description of Sample 2"
+    well_barcode: "B2"
+    index_1: "CGTACGTA"
+    index_2: "TACGTACG"
+
+  - sample_id: "Sample3"
+    sample_name: "SampleName3"
+    sample_description: "Description of Sample 3"
+    well_barcode: "C3"
+    index_1: "GATCGATC"
+    index_2: "TAGCTAGC"
+
+  - sample_id: "Sample4"
+    sample_name: "SampleName4"
+    sample_description: "Description of Sample 4"
+    well_barcode: "D4"
+    index_1: "ATCGTAGC"
+    index_2: "CGTACGTA"
+
+
+    
