@@ -37,7 +37,7 @@ from .utils import parse_barcodes, print_splash, process_droplet
 def run(
     sequences: str | Path | list[str | Path],
     output_directory: str | Path,
-    temp_directory: str | Path = "/tmp",
+    temp_directory: str | Path | None = None,
     whitelist_path: str | Path | None = None,
     platform: str = "illumina",
     clustering_threshold: float = 0.9,
@@ -63,8 +63,9 @@ def run(
     output_directory : str | Path
         Path to the output directory. If it does not exist, it will be created.
 
-    temp_directory : str | Path
-        Path to the temporary directory. If it does not exist, it will be created.
+    temp_directory : str | Path | None
+        Path to the temporary directory. If it does not exist, it will be created. If None, a temporary sub-directory will
+        be created in the output directory.
 
     whitelist_path : str | Path | None
         Path to the whitelist file. If None, the default whitelist will be used.
@@ -122,7 +123,11 @@ def run(
 
     # setup directories
     output_directory = Path(output_directory).resolve()
-    temp_directory = Path(temp_directory).resolve()
+    temp_directory = (
+        Path(temp_directory).resolve()
+        if temp_directory is not None
+        else output_directory / "temp"
+    )
     log_directory = output_directory / "logs"
     parsed_directory = output_directory / "parsed"
     consensus_directory = output_directory / "consensus"
