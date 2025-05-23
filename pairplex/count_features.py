@@ -34,6 +34,18 @@ def count_features(
         debug (bool): Whether to enable debug mode, which saves all temporary files to ease troubleshooting.
     """
 
-    
+    # Preflight
+
+
+    # Cell barcodes parsing
+
+
+    # Feature barcode counting
+
+
+    # Save results
+
+
+    # Cleanup
 
     return
