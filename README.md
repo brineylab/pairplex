@@ -1,4 +1,6 @@
+![](https://img.shields.io/pypi/v/pairplex.svg?colorB=blue)
 [![tests](https://github.com/brineylab/pairplex/actions/workflows/pytest.yml/badge.svg)](https://github.com/brineylab/pairplex/actions/workflows/pytest.yml)
+![](https://img.shields.io/pypi/pyversions/pairplex.svg)
 ![](https://img.shields.io/badge/license-MIT-blue.svg)
 
 # PairPlex
