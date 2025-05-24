@@ -307,6 +307,7 @@ def process_droplet(
                 clust.sequences,
                 downsample_to=consensus_downsample,
                 name=contig_name,
+                temp_dir = temp_directory
             )
         else:
             consensus = clust.sequences[0]
