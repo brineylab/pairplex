@@ -124,7 +124,7 @@ def count_features(
         parquet_chunks = []
         futures = [
             executor.submit(
-                parse_fbc, chunk, temp_directory, whitelist_path=whitelist_path
+                parse_fbc, chunk, temp_directory, whitelist_cell_bc=whitelist_path, whitelist_feature_bc=antigen_barcodes
             )
             for chunk in fastq_chunks
         ]
@@ -141,4 +141,4 @@ def count_features(
         df = pl.read_parquet(concat_parquet)
 
 
-    return
+    return df
