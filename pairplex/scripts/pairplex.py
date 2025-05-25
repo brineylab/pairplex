@@ -201,8 +201,8 @@ def make_fastq(
 def count_features(
     sequence_data: str | Path,
     output_directory: str | Path,
-    samplesheet: str | Path | None,
-    platform: str,
+    whitelist_path: str | Path | None = None,
+    antigen_barcodes: str | Path | None = None,
     debug: bool,
 ):
     """
@@ -211,7 +211,10 @@ def count_features(
     Args:
         sequence_data (str | Path): Path to the sequencing data.
         output_directory (str | Path): Path to the output directory.
+        whitelist_path (str | Path | None): Path to the cell barcode whitelist file or name of a built-in whitelist.
+            If None, default whitelist will be used.
         antigen_barcodes (str | Path): Path to the antigen barcodes set file (fasta or csv).
+            If None, default antigen barcodes (x50) will be used.
         debug (bool): Whether to enable debug mode, which saves all temporary files to ease troubleshooting.
     """
     
