@@ -15,12 +15,16 @@
 # along with PairPlex. If not, see <http://www.gnu.org/licenses/>.
 
 from pathlib import Path
+from natsrort import natsorted
+import abutils
+
+from .pairplex import parse_fbc
 
 def count_features(
-    sequencing_folder: str | Path,
+    sequence_data: str | Path,
     output_directory: str | Path,
-    samplesheet: str | Path | None,
-    platform: str,
+    whitelist_path: str | Path | None = None,
+    antigen_barcodes: str | Path | None = None,
     debug: bool,
 ):
     """
@@ -29,23 +33,112 @@ def count_features(
     Args:
         sequencing_folder (str | Path): Path to the sequencing folder.
         output_directory (str | Path): Path to the output directory.
-        samplesheet (str | Path | None): Path to the samplesheet file (CSV or YAML).
-        platform (str): Sequencing platform.
+        whitelist_path (str | Path | None): Path to the cell barcode whitelist file or name of a built-in whitelist.
+            If None, default whitelist will be used.
+        antigen_barcodes (str | Path): Path to the antigen barcodes file.
+            If None, default antigen barcodes (x50) will be used.
         debug (bool): Whether to enable debug mode, which saves all temporary files to ease troubleshooting.
     """
 
-    # Preflight
+    sequence_data = Path(sequence_data)
+    output_directory = Path(output_directory)
+    antigen_barcodes = Path(antigen_barcodes)
+    output_directory.mkdir(parents=True, exist_ok=True)
+    if debug:
+        print(f"Debug mode is enabled. All temporary files will be saved in {output_directory}")
+
+    if isinstance(sequences, str | Path):
+        sequences = Path(sequences).resolve()
+        if sequences.is_dir():
+            input_files = abutils.io.list_files(
+                str(sequences),
+                recursive=True,
+                extension=[
+                    "fastq.gz",
+                    "fq.gz",
+                    "fastq",
+                    "fq",
+                    "fasta.gz",
+                    "fa.gz",
+                    "fasta",
+                    "fa",
+                ],
+            )
+        elif sequences.is_file():
+            input_files = [str(sequences)]
+        else:
+            raise FileNotFoundError(
+                f"string/path input must be a directory or file: {sequences}"
+            )
+    elif isinstance(sequences, list):
+        input_files = [str(Path(f).resolve()) for f in sequences]
+    else:
+        raise ValueError(f"Invalid input type: {type(sequences)}")
+    input_files = [f for f in input_files if "Unassigned" not in f]
 
 
-    # Cell barcodes parsing
+    main_pbar = tqdm(
+        total=len(input_files),
+        desc="pairplex",
+        position=0,
+        leave=True,
+        dynamic_ncols=True,
+    )
 
+    blank1_printer = tqdm(total=0, bar_format=" ", position=1, leave=True)
+    running_total_printer = tqdm(total=0, bar_format="{desc}", position=2, leave=True)
+    blank2_printer = tqdm(total=0, bar_format=" ", position=3, leave=True)
+    all_valid_barcodes = 0
 
-    # Feature barcode counting
+    for input_file in natsorted(input_files):
+        to_delete = []
 
+        name_printer = tqdm(total=0, bar_format="{desc}", position=4, leave=False)
+        seqs_printer = tqdm(total=0, bar_format="{desc}", position=5, leave=False)
+        valids_printer = tqdm(total=0, bar_format="{desc}", position=6, leave=False)
 
-    # Save results
+        input_file = Path(input_file)
+        name = input_file.stem
+        name_printer.set_description_str(f"---- {name} ----")
+        
+        # count sequences
+        input_count = 0
+        for s in abutils.io.parse_fastx(str(input_file)):
+            input_count += 1
+        seqs_printer.set_description_str(f"{input_count} input sequences")
 
+        # split input file into chunks
+        main_pbar.set_postfix_str("splitting input file", refresh=True)
+        fastq_chunks = abutils.io.split_fastx(
+            fastx_file=str(input_file),
+            output_directory=str(temp_directory),
+            chunksize=1000,
+        )
+        to_delete.extend(fastq_chunks)
 
-    # Cleanup
+        ########################
+        #  Parse barcodes
+        ########################
+
+        main_pbar.set_postfix_str("parsing barcodes", refresh=True)
+        parquet_chunks = []
+        futures = [
+            executor.submit(
+                parse_fbc, chunk, temp_directory, whitelist_path=whitelist_path
+            )
+            for chunk in fastq_chunks
+        ]
+        for future in as_completed(futures):
+            res = future.result()
+            if res is not None:
+                parquet_chunks.append(res)
+        to_delete.extend(parquet_chunks)
+
+        # concatenate parsed data into a single dataframe
+        concat_parquet = abutils.io.concatenate_parquet(
+            parquet_chunks, parsed_directory / f"{name}.parquet"
+        )
+        df = pl.read_parquet(concat_parquet)
+
 
     return

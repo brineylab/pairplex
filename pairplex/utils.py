@@ -26,7 +26,9 @@ import polars as pl
 from .version import __version__
 
 BARCODE_DIR = Path(__file__).resolve().parent / "barcodes"
+FEATURE_DIR = Path(__file__).resolve().parent / "features"
 DEFAULT_WHITELIST = BARCODE_DIR / "737K-august-2016.txt"
+DEFAULT_FEATURES = FEATURE_DIR / "antigen_barcodes.txt"
 
 
 # def setup_logger(output_folder: str, verbose: bool, debug: bool) -> logging.Logger:
@@ -57,6 +59,21 @@ DEFAULT_WHITELIST = BARCODE_DIR / "737K-august-2016.txt"
 #     logger.addHandler(console_handler)
 
 #     return logger
+
+def get_whitelist_features(whitelist_name: str | Path) -> str | Path:
+    """Get the path to a builtin feature barcode whitelist."""
+    builtin_whitelists = {
+        "default": FEATURE_DIR / "antigen_barcodes.txt",
+        "brineylab": FEATURE_DIR / "brineylab_antigen_barcodes.txt",
+    }
+    # Check if it's a string that corresponds to a built-in whitelist
+    if isinstance(whitelist_name, str) and whitelist_name.lower() in builtin_whitelists:
+        return builtin_whitelists[whitelist_name.lower()]
+    # Check if it's a path or a string path that exists
+    elif Path(whitelist_name).exists():
+        return Path(whitelist_name)
+    else:
+        raise ValueError(f"Invalid feature barcode whitelist name or path: {whitelist_name}")
 
 
 def get_whitelist_path(whitelist_name: str | Path) -> str | Path:
@@ -150,6 +167,107 @@ def correct_barcode(
     if len(matches) == 1:
         return matches[0]
     return None  # Explicitly return None if no single correction is found
+
+
+def parse_fbc(
+    input_file: str | Path,
+    output_directory: str | Path,
+    whitelist_cell_bc: str | Path | None = None,
+    whitelist_feature_bc: str | Path | None = None,
+    check_rc: bool = True,
+    strict: bool = True,
+) -> str | None:
+    """
+    Process a chunk of fastq file to extract cell barcode feature barcode and UMIs based on cpature sequence (TSO) and R1 adaptor.
+
+    Parameters
+    ----------
+    input_file : str | Path
+        The input file, in FASTA/Q format (optionally gzip-compressed).
+
+    output_directory : str | Path
+        The directory to save the output.
+
+    whitelist_cell_bc : str | Path | None = None
+        The path to the cell barcodes file.
+
+    whitelist_feature_bc : str | Path | None = None
+        The path to the feature barcodes file.
+
+    check_rc : bool = True
+        Whether to check the reverse complement of the sequences.
+
+    strict : bool = True
+        If True, enforce the presence (exact match) of the R1 adaptor and TSO sequence.
+
+    Returns
+    -------
+    str | None
+        The path to the output file (or None if no records are found).
+    """
+
+    input_file = Path(input_file)
+    output_name = input_file.stem
+
+    # prepare cell barcode whitelist
+    if whitelist_cell_bc is None:
+        whitelist_cell_bc = DEFAULT_WHITELIST
+    else:
+        whitelist_cell_bc = get_whitelist_path(whitelist_cell_bc)
+    whitelist_cells = load_barcode_whitelist(whitelist_cell_bc)
+
+    # prepare feature/antigen barcode whitelist
+    if whitelist_feature_bc is None:
+        whitelist_feature_bc = DEFAULT_FEATURES
+    else:
+        whitelist_feature_bc = get_whitelist_features(whitelist_feature_bc)
+    whitelist_features = load_barcode_whitelist(whitelist_feature_bc)
+
+    # initialize records list
+    records = []
+    for seq in abutils.io.parse_fastx(str(input_file)):
+        seqs = [seq.sequence]
+        if check_rc:
+            seqs.append(abutils.tl.reverse_complement(seq.sequence))
+        for s in seqs:
+            # parse cell barcode, feature barcode and UMI
+            r_cell_bc = s[58:75]
+            r_feature_bc = s[9:25]
+            r_umi = s[47:58]
+            capture_seq = s[33:47]  # TSO sequence
+            r_R1 = s[75:]
+
+            if strict:
+                if r_R1 != "AGATCGGAAGAGCGTCG": 
+                    continue
+                elif capture_seq != "CCCATATAAGAAA":
+                    continue
+            
+            # reverse the cell barcodes, feature barcodes and UMIs
+            cell_bc = r_cell_bc[::-1]
+            feature_bc = r_feature_bc[::-1]
+            umi = r_umi[::-1]
+
+            # correct cell barcode and feature barcode
+            corrected_cell_bc = correct_barcode(cell_bc, whitelist_cells)
+            corrected_feature_bc = correct_barcode(feature_bc, whitelist_features)
+
+            if corrected_cell_bc is None or corrected_feature_bc is None:
+                continue
+
+            # build the record
+            records.append(
+                {
+                    "cell_barcode": corrected_cell_bc,
+                    "umi": umi,
+                    "feature_barcode": corrected_feature_bc,
+                    # "seq_id": seq.id,             # not sure these are needed, kept them in case (also as a reminder)
+                    # "sequence": sequence,
+                }
+            )
+            # all done!
+            break
+
 
 
 def parse_barcodes(

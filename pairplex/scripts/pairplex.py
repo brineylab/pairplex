@@ -20,6 +20,7 @@ from pathlib import Path
 import click
 
 from ..make_fastq import make_fastq as make_fastq_pairplex
+from ..count_features import count_features as count_features_pairplex
 from ..pairplex import run as run_pairplex
 from ..version import __version__
 
@@ -173,7 +174,49 @@ def make_fastq(
 ):
     
     make_fastq_pairplex(
-        sequencing_folder=sequencing_folder,
+        sequence_dir=sequencing_folder,
+        output_directory=output_directory,
+        samplesheet=samplesheet,
+        platform=platform,
+        debug=debug,
+    )
+
+
+@cli.command()
+@cli.argument(sequence_data=click.Path(exists=True))
+@cli.argument(output_directory=click.Path())
+@cli.option(
+    "--antigen_barcodes",
+    type=click.Path(),
+    default=None,
+    help="Path to the antigen barcodes set file (fasta or csv)",
+)
+@cli.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Whether to enable debug mode, which saves all temporary files to ease troubleshooting",
+)
+
+def count_features(
+    sequence_data: str | Path,
+    output_directory: str | Path,
+    samplesheet: str | Path | None,
+    platform: str,
+    debug: bool,
+):
+    """
+    Count features in the sequencing folder and save the results to the output directory.
+    
+    Args:
+        sequence_data (str | Path): Path to the sequencing data.
+        output_directory (str | Path): Path to the output directory.
+        antigen_barcodes (str | Path): Path to the antigen barcodes set file (fasta or csv).
+        debug (bool): Whether to enable debug mode, which saves all temporary files to ease troubleshooting.
+    """
+    
+    count_features_pairplex(
+        sequence_data=sequence_data,
         output_directory=output_directory,
         samplesheet=samplesheet,
         platform=platform,
