@@ -48,7 +48,11 @@ def count_features(
     # sequence_data = Path(sequence_data)
     output_directory = Path(output_directory)
     # antigen_barcodes = Path(antigen_barcodes)  # no need, this is handled in parse_fbc in utils.py
+    temp_directory = output_directory / "temp"
+    parsed_directory = output_directory / "parsed"
     output_directory.mkdir(parents=True, exist_ok=True)
+    temp_directory.mkdir(parents=True, exist_ok=True)
+    parsed_directory.mkdir(parents=True, exist_ok=True)
     if debug:
         print(f"Debug mode is enabled. All temporary files will be saved in {output_directory}")
 
