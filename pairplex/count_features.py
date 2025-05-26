@@ -15,7 +15,7 @@
 # along with PairPlex. If not, see <http://www.gnu.org/licenses/>.
 
 from pathlib import Path
-from natsrort import natsorted
+from natsort import natsorted
 import abutils
 
 from .pairplex import parse_fbc
