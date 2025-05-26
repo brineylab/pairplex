@@ -183,21 +183,21 @@ def make_fastq(
 
 
 @cli.command()
-@cli.argument(sequence_data=click.Path(exists=True))
-@cli.argument(output_directory=click.Path())
-@cli.option(
+@click.argument(sequence_data=click.Path(exists=True))
+@click.argument(output_directory=click.Path())
+@click.option(
     "--whitelist_path",
     type=click.Path(),
     default=None,
     help="Path to the cell barcode whitelist file or name of a built-in whitelist. If None, default whitelist will be used.",
 )   
-@cli.option(
+@click.option(
     "--antigen_barcodes",
     type=click.Path(),
     default=None,
     help="Path to the antigen barcodes set file (fasta or csv)",
 )
-@cli.option(
+@click.option(
     "--debug",
     is_flag=True,
     default=False,
