@@ -83,7 +83,9 @@ def count_features(
         input_files = [str(Path(f).resolve()) for f in sequences]
     else:
         raise ValueError(f"Invalid input type: {type(sequences)}")
+
     input_files = [f for f in input_files if "Unassigned" not in f]
+    input_files = [f for f in input_files if "_R2_" in f] # as discussed, there might be a better way to do this, but we only need to go through read 2 
 
 
     main_pbar = tqdm(
@@ -164,7 +166,7 @@ def count_features(
             ########################
 
             main_pbar.set_postfix_str("counting valid barcodes", refresh=True)
-            
+
 
 
     return df
