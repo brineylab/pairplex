@@ -213,7 +213,7 @@ def count_features(
 ):
     
     count_features_pairplex(
-        sequences=sequence_data,
+        sequences=sequences,
         output_directory=output_directory,
         whitelist_path=whitelist_path,
         antigen_barcodes=antigen_barcodes,
