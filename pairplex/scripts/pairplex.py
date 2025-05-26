@@ -183,7 +183,7 @@ def make_fastq(
 
 
 @cli.command()
-@click.argument("sequence_data", type=click.Path(exists=True))
+@click.argument("sequences", type=click.Path(exists=True))
 @click.argument("output_directory", type=click.Path())
 @click.option(
     "--whitelist_path",
@@ -205,7 +205,7 @@ def make_fastq(
 )
 
 def count_features(
-    sequence_data: str | Path,
+    sequences: str | Path,
     output_directory: str | Path,
     whitelist_path: str | Path | None = None,
     antigen_barcodes: str | Path | None = None,
@@ -213,7 +213,7 @@ def count_features(
 ):
     
     count_features_pairplex(
-        sequence_data=sequence_data,
+        sequences=sequence_data,
         output_directory=output_directory,
         whitelist_path=whitelist_path,
         antigen_barcodes=antigen_barcodes,
