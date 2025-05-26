@@ -25,7 +25,7 @@ def count_features(
     output_directory: str | Path,
     whitelist_path: str | Path | None = None,
     antigen_barcodes: str | Path | None = None,
-    debug: bool,
+    debug: bool = False,
 ):
     """
     Count features in the sequencing folder and save the results to the output directory.
@@ -38,6 +38,7 @@ def count_features(
         antigen_barcodes (str | Path): Path to the antigen barcodes file.
             If None, default antigen barcodes (x50) will be used.
         debug (bool): Whether to enable debug mode, which saves all temporary files to ease troubleshooting.
+            Default is False.
     """
 
     sequence_data = Path(sequence_data)
