@@ -21,7 +21,7 @@ import abutils
 from .utils import parse_fbc
 
 def count_features(
-    sequence_data: str | Path,
+    sequences: str | Path,
     output_directory: str | Path,
     whitelist_path: str | Path | None = None,
     antigen_barcodes: str | Path | None = None,
@@ -31,7 +31,7 @@ def count_features(
     Count features in the sequencing folder and save the results to the output directory.
     
     Args:
-        sequencing_folder (str | Path): Path to the sequencing folder.
+        sequences (str | Path): Path to the sequencing folder.
         output_directory (str | Path): Path to the output directory.
         whitelist_path (str | Path | None): Path to the cell barcode whitelist file or name of a built-in whitelist.
             If None, default whitelist will be used.
@@ -41,7 +41,7 @@ def count_features(
             Default is False.
     """
 
-    sequence_data = Path(sequence_data)
+    # sequence_data = Path(sequence_data)
     output_directory = Path(output_directory)
     # antigen_barcodes = Path(antigen_barcodes)  # no need, this is handled in parse_fbc in utils.py
     output_directory.mkdir(parents=True, exist_ok=True)
