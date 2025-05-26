@@ -148,10 +148,23 @@ def count_features(
             to_delete.extend(parquet_chunks)
 
             # concatenate parsed data into a single dataframe
-            concat_parquet = abutils.io.concatenate_parquet(
-                parquet_chunks, parsed_directory / f"{name}.parquet"
-            )
-            df = pl.read_parquet(concat_parquet)
+            if parquet_chunks:
+                concat_parquet = abutils.io.concatenate_parquet(
+                    parquet_chunks, parsed_directory / f"{name}.parquet"
+                )
+                df = pl.read_parquet(concat_parquet)
+            else:
+                raise ValueError(
+                    f"No valid barcodes found in {input_file}. Please check the input file."
+                )
+
+
+            ########################
+            # count valid barcodes
+            ########################
+
+            main_pbar.set_postfix_str("counting valid barcodes", refresh=True)
+            
 
 
     return df
