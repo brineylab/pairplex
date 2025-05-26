@@ -165,8 +165,15 @@ def count_features(
             # count valid barcodes
             ########################
 
-            main_pbar.set_postfix_str("counting valid barcodes", refresh=True)
+            # partition into separate parquet files by barcode
+            main_pbar.set_postfix_str("partitioning barcodes", refresh=True)
+            partitions = df.partition_by("barcode", as_dict=True)
 
+            # we don't need to filter by size, we're counting all of them
+
+            # count valid barcodes
+            main_pbar.set_postfix_str("counting valid barcodes", refresh=True)
+            
 
 
     return df

@@ -231,22 +231,22 @@ def parse_fbc(
             seqs.append(abutils.tl.reverse_complement(seq.sequence))
         for s in seqs:
             # parse cell barcode, feature barcode and UMI
-            r_cell_bc = s[58:75]
-            r_feature_bc = s[9:25]
-            r_umi = s[47:58]
+            cell_bc = s[58:75]
+            feature_bc = s[9:25]
+            umi = s[47:58]
             capture_seq = s[33:47]  # TSO sequence
-            r_R1 = s[75:]
+            R1 = s[75:]
 
             if strict:
-                if r_R1 != "AGATCGGAAGAGCGTCG": 
+                if R1 != "AGATCGGAAGAGCGTCG": 
                     continue
                 elif capture_seq != "CCCATATAAGAAA":
                     continue
             
-            # reverse the cell barcodes, feature barcodes and UMIs
-            cell_bc = r_cell_bc[::-1]
-            feature_bc = r_feature_bc[::-1]
-            umi = r_umi[::-1]
+            # reverse the cell barcodes, feature barcodes and UMIs (not actually needed?)
+            # cell_bc = r_cell_bc[::-1]
+            # feature_bc = r_feature_bc[::-1]
+            # umi = r_umi[::-1]
 
             # correct cell barcode and feature barcode
             corrected_cell_bc = correct_barcode(cell_bc, whitelist_cells)
