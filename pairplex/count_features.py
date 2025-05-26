@@ -18,7 +18,7 @@ from pathlib import Path
 from natsort import natsorted
 import abutils
 
-from .pairplex import parse_fbc
+from .utils import parse_fbc
 
 def count_features(
     sequence_data: str | Path,
