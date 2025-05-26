@@ -211,18 +211,6 @@ def count_features(
     antigen_barcodes: str | Path | None = None,
     debug: bool = False,
 ):
-    """
-    Count features in the sequencing folder and save the results to the output directory.
-    
-    Args:
-        sequence_data (str | Path): Path to the sequencing data.
-        output_directory (str | Path): Path to the output directory.
-        whitelist_path (str | Path | None): Path to the cell barcode whitelist file or name of a built-in whitelist.
-            If None, default whitelist will be used.
-        antigen_barcodes (str | Path): Path to the antigen barcodes set file (fasta or csv).
-            If None, default antigen barcodes (x50) will be used.
-        debug (bool): Whether to enable debug mode, which saves all temporary files to ease troubleshooting.
-    """
     
     count_features_pairplex(
         sequence_data=sequence_data,
