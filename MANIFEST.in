@@ -2,5 +2,6 @@ include README.md
 include requirements.txt
 
 include pairplex/barcodes/*
+include pairplex/features/*
 include pairplex/data/*
 include pairplex/tests/*
