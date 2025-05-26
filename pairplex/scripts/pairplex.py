@@ -183,8 +183,8 @@ def make_fastq(
 
 
 @cli.command()
-@click.argument(sequence_data=click.Path(exists=True))
-@click.argument(output_directory=click.Path())
+@click.argument("sequence_data", type=click.Path(exists=True))
+@click.argument("output_directory", type=click.Path())
 @click.option(
     "--whitelist_path",
     type=click.Path(),
