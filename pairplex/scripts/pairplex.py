@@ -209,7 +209,7 @@ def count_features(
     output_directory: str | Path,
     whitelist_path: str | Path | None = None,
     antigen_barcodes: str | Path | None = None,
-    debug: bool,
+    debug: bool = False,
 ):
     """
     Count features in the sequencing folder and save the results to the output directory.
