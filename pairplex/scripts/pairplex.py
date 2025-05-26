@@ -186,6 +186,12 @@ def make_fastq(
 @cli.argument(sequence_data=click.Path(exists=True))
 @cli.argument(output_directory=click.Path())
 @cli.option(
+    "--whitelist_path",
+    type=click.Path(),
+    default=None,
+    help="Path to the cell barcode whitelist file or name of a built-in whitelist. If None, default whitelist will be used.",
+)   
+@cli.option(
     "--antigen_barcodes",
     type=click.Path(),
     default=None,
@@ -221,7 +227,7 @@ def count_features(
     count_features_pairplex(
         sequence_data=sequence_data,
         output_directory=output_directory,
-        samplesheet=samplesheet,
-        platform=platform,
+        whitelist_path=whitelist_path,
+        antigen_barcodes=antigen_barcodes,
         debug=debug,
     )

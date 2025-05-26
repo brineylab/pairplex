@@ -42,7 +42,7 @@ def count_features(
 
     sequence_data = Path(sequence_data)
     output_directory = Path(output_directory)
-    antigen_barcodes = Path(antigen_barcodes)
+    # antigen_barcodes = Path(antigen_barcodes)  # no need, this is handled in parse_fbc in utils.py
     output_directory.mkdir(parents=True, exist_ok=True)
     if debug:
         print(f"Debug mode is enabled. All temporary files will be saved in {output_directory}")
@@ -90,55 +90,59 @@ def count_features(
     blank2_printer = tqdm(total=0, bar_format=" ", position=3, leave=True)
     all_valid_barcodes = 0
 
-    for input_file in natsorted(input_files):
-        to_delete = []
+     # initialize the Process Pool
+    with ProcessPoolExecutor(
+        max_workers=mp.cpu_count(), mp_context=mp.get_context("spawn")
+    ) as executor:
+        for input_file in natsorted(input_files):
+            to_delete = []
 
-        name_printer = tqdm(total=0, bar_format="{desc}", position=4, leave=False)
-        seqs_printer = tqdm(total=0, bar_format="{desc}", position=5, leave=False)
-        valids_printer = tqdm(total=0, bar_format="{desc}", position=6, leave=False)
+            name_printer = tqdm(total=0, bar_format="{desc}", position=4, leave=False)
+            seqs_printer = tqdm(total=0, bar_format="{desc}", position=5, leave=False)
+            valids_printer = tqdm(total=0, bar_format="{desc}", position=6, leave=False)
 
-        input_file = Path(input_file)
-        name = input_file.stem
-        name_printer.set_description_str(f"---- {name} ----")
-        
-        # count sequences
-        input_count = 0
-        for s in abutils.io.parse_fastx(str(input_file)):
-            input_count += 1
-        seqs_printer.set_description_str(f"{input_count} input sequences")
+            input_file = Path(input_file)
+            name = input_file.stem
+            name_printer.set_description_str(f"---- {name} ----")
+            
+            # count sequences
+            input_count = 0
+            for s in abutils.io.parse_fastx(str(input_file)):
+                input_count += 1
+            seqs_printer.set_description_str(f"{input_count} input sequences")
 
-        # split input file into chunks
-        main_pbar.set_postfix_str("splitting input file", refresh=True)
-        fastq_chunks = abutils.io.split_fastx(
-            fastx_file=str(input_file),
-            output_directory=str(temp_directory),
-            chunksize=1000,
-        )
-        to_delete.extend(fastq_chunks)
-
-        ########################
-        #  Parse barcodes
-        ########################
-
-        main_pbar.set_postfix_str("parsing barcodes", refresh=True)
-        parquet_chunks = []
-        futures = [
-            executor.submit(
-                parse_fbc, chunk, temp_directory, whitelist_cell_bc=whitelist_path, whitelist_feature_bc=antigen_barcodes
+            # split input file into chunks
+            main_pbar.set_postfix_str("splitting input file", refresh=True)
+            fastq_chunks = abutils.io.split_fastx(
+                fastx_file=str(input_file),
+                output_directory=str(temp_directory),
+                chunksize=1000,
             )
-            for chunk in fastq_chunks
-        ]
-        for future in as_completed(futures):
-            res = future.result()
-            if res is not None:
-                parquet_chunks.append(res)
-        to_delete.extend(parquet_chunks)
+            to_delete.extend(fastq_chunks)
 
-        # concatenate parsed data into a single dataframe
-        concat_parquet = abutils.io.concatenate_parquet(
-            parquet_chunks, parsed_directory / f"{name}.parquet"
-        )
-        df = pl.read_parquet(concat_parquet)
+            ########################
+            #  Parse barcodes
+            ########################
+
+            main_pbar.set_postfix_str("parsing barcodes", refresh=True)
+            parquet_chunks = []
+            futures = [
+                executor.submit(
+                    parse_fbc, chunk, temp_directory, whitelist_cell_bc=whitelist_path, whitelist_feature_bc=antigen_barcodes
+                )
+                for chunk in fastq_chunks
+            ]
+            for future in as_completed(futures):
+                res = future.result()
+                if res is not None:
+                    parquet_chunks.append(res)
+            to_delete.extend(parquet_chunks)
+
+            # concatenate parsed data into a single dataframe
+            concat_parquet = abutils.io.concatenate_parquet(
+                parquet_chunks, parsed_directory / f"{name}.parquet"
+            )
+            df = pl.read_parquet(concat_parquet)
 
 
     return df

@@ -268,6 +268,14 @@ def parse_fbc(
             # all done!
             break
 
+    if records:
+        output_directory = Path(output_directory)
+        output_directory.mkdir(parents=True, exist_ok=True)
+        output_file = output_directory / f"bcdf_{output_name}.parquet"
+        df = pl.DataFrame(records)
+        df.write_parquet(output_file)
+        return str(output_file)
+
 
 
 def parse_barcodes(
