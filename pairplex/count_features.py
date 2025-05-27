@@ -22,7 +22,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing as mp
 import polars as pl
 
-from .utils import parse_fbc
+from .utils import parse_fbc, load_barcode_whitelist
 
 def count_features(
     sequences: str | Path,
@@ -174,6 +174,48 @@ def count_features(
             # count valid barcodes
             main_pbar.set_postfix_str("counting valid barcodes", refresh=True)
 
+            total_counts = {}
 
+            for cell_bc, table in partitions.items():
+                # Ensure cell_bc is a string or something hashable
+                if isinstance(cell_bc, tuple):
+                    cell_bc = cell_bc[0]
 
-    return df
+                # Compute value counts of 'fbc' column
+                counts = table.group_by("fbc").count()
+
+                # Convert to dict for quick lookup: {'barcode1': count1, 'barcode2': count2, ...}
+                counts_dict = dict(zip(counts['fbc'].to_list(), counts['count'].to_list()))
+
+                # Counts the per-cell antige-barcodes and store in dictionary
+                ag_barcodes = load_barcode_whitelist(antigen_barcodes)
+                if ag_barcodes is None:
+                    raise ValueError("No antigen barcodes provided or found.")
+                cell_counts = {ag_barcode: counts_dict.get(ag_barcode, 0) for ag_barcode in ag_barcodes}
+
+                # Store in main result
+                total_counts[cell_bc] = cell_counts
+
+            # Convert the total_counts dictionary to a DataFrame
+            dfs = []
+            for k, v in total_counts.items():
+                data = {'index': [k]}
+                for k2, v2 in total_counts[k].items():
+                    data[k2] = [v2]
+                _df = pl.DataFrame(data)
+                dfs.append(_df)
+            df = pl.concat(dfs)
+
+            # Save the DataFrame to a parquet file
+            parquet_file = output_directory / f"{name}_counts.parquet"
+            df.write_parquet(parquet_file)
+
+            csv_file = output_directory / f"{name}_counts.csv"
+            df.write_csv(csv_file)
+
+            # clean up temporary files
+            for f in to_delete:
+                if f.exists():
+                    f.unlink()
+
+    return
