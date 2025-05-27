@@ -169,6 +169,12 @@ def correct_barcode(
     return None  # Explicitly return None if no single correction is found
 
 
+def one_mismatch_or_less(seq1: str, seq2: str) -> bool:
+    if len(seq1) != len(seq2):
+        return False
+    return sum(c1 != c2 for c1, c2 in zip(seq1, seq2)) <= 1
+
+
 def parse_fbc(
     input_file: str | Path,
     output_directory: str | Path,
@@ -231,23 +237,18 @@ def parse_fbc(
             seqs.append(abutils.tl.reverse_complement(seq.sequence))
         for s in seqs:
             # parse cell barcode, feature barcode and UMI
-            cell_bc = s[58:75]
-            feature_bc = s[9:25]
-            umi = s[47:58]
+            cell_bc = s[57:73]
+            feature_bc = s[10:25]
+            umi = s[47:57]
             capture_seq = s[34:47]  # TSO sequence
-            R1 = s[75:]
+            R1 = s[73:]
 
             if strict:
-                # if R1 != "AGATCGGAAGAGCGTCG":   # The R1 adapter can change in different protocols, so we don't enforce it
-                #     continue
-                if capture_seq != "CCCATATAAGAAA":
+                if not one_mismatch_or_less(R1, "AGATCGGAAGAGCGTCG"):
+                    continue
+                if not one_mismatch_or_less(capture_seq, "CCCATATAAGAAA"):
                     continue
             
-            # reverse the cell barcodes, feature barcodes and UMIs (not actually needed?)
-            # cell_bc = r_cell_bc[::-1]
-            # feature_bc = r_feature_bc[::-1]
-            # umi = r_umi[::-1]
-
             # correct cell barcode and feature barcode
             corrected_cell_bc = correct_barcode(cell_bc, whitelist_cells)
             corrected_feature_bc = correct_barcode(feature_bc, whitelist_features)
