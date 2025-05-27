@@ -238,9 +238,9 @@ def parse_fbc(
             R1 = s[75:]
 
             if strict:
-                if R1 != "AGATCGGAAGAGCGTCG": 
-                    continue
-                elif capture_seq != "CCCATATAAGAAA":
+                # if R1 != "AGATCGGAAGAGCGTCG":   # The R1 adapter can change in different protocols, so we don't enforce it
+                #     continue
+                if capture_seq != "CCCATATAAGAAA":
                     continue
             
             # reverse the cell barcodes, feature barcodes and UMIs (not actually needed?)
