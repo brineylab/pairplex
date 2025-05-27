@@ -234,7 +234,7 @@ def parse_fbc(
             cell_bc = s[58:75]
             feature_bc = s[9:25]
             umi = s[47:58]
-            capture_seq = s[33:47]  # TSO sequence
+            capture_seq = s[34:47]  # TSO sequence
             R1 = s[75:]
 
             if strict:

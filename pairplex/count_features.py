@@ -139,7 +139,7 @@ def count_features(
             parquet_chunks = []
             futures = [
                 executor.submit(
-                    parse_fbc, chunk, temp_directory, whitelist_cell_bc=whitelist_path, whitelist_feature_bc=antigen_barcodes
+                    parse_fbc, chunk, temp_directory, whitelist_cell_bc=whitelist_path, whitelist_feature_bc=antigen_barcodes, strict=False
                 )
                 for chunk in fastq_chunks
             ]
@@ -173,7 +173,7 @@ def count_features(
 
             # count valid barcodes
             main_pbar.set_postfix_str("counting valid barcodes", refresh=True)
-            
+
 
 
     return df
