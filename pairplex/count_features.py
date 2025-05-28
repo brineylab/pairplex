@@ -167,7 +167,7 @@ def count_features(
 
             # partition into separate parquet files by barcode
             main_pbar.set_postfix_str("partitioning barcodes", refresh=True)
-            partitions = df.partition_by("barcode", as_dict=True)
+            partitions = df.partition_by("cell_barcode", as_dict=True)
 
             # we don't need to filter by size, we're counting all of them
 
@@ -182,10 +182,10 @@ def count_features(
                     cell_bc = cell_bc[0]
 
                 # Compute value counts of 'fbc' column
-                counts = table.group_by("fbc").count()
+                counts = table.group_by("feature_barcode").count()
 
                 # Convert to dict for quick lookup: {'barcode1': count1, 'barcode2': count2, ...}
-                counts_dict = dict(zip(counts['fbc'].to_list(), counts['count'].to_list()))
+                counts_dict = dict(zip(counts['feature_barcode'].to_list(), counts['count'].to_list()))
 
                 # Counts the per-cell antige-barcodes and store in dictionary
                 ag_barcodes = load_barcode_whitelist(antigen_barcodes)
