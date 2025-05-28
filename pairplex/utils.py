@@ -212,75 +212,70 @@ def parse_fbc(
         The path to the output file (or None if no records are found).
     """
 
-    try:
-        input_file = Path(input_file)
-        output_name = input_file.stem
+    input_file = Path(input_file)
+    output_name = input_file.stem
 
-        # prepare cell barcode whitelist
-        if whitelist_cell_bc is None:
-            whitelist_cell_bc = DEFAULT_WHITELIST
-        else:
-            whitelist_cell_bc = get_whitelist_path(whitelist_cell_bc)
-        whitelist_cells = load_barcode_whitelist(whitelist_cell_bc)
+    # prepare cell barcode whitelist
+    if whitelist_cell_bc is None:
+        whitelist_cell_bc = DEFAULT_WHITELIST
+    else:
+        whitelist_cell_bc = get_whitelist_path(whitelist_cell_bc)
+    whitelist_cells = load_barcode_whitelist(whitelist_cell_bc)
 
-        # prepare feature/antigen barcode whitelist
-        if whitelist_feature_bc is None:
-            whitelist_feature_bc = DEFAULT_FEATURES
-        else:
-            whitelist_feature_bc = get_whitelist_features(whitelist_feature_bc)
-        whitelist_features = load_barcode_whitelist(whitelist_feature_bc)
+    # prepare feature/antigen barcode whitelist
+    if whitelist_feature_bc is None:
+        whitelist_feature_bc = DEFAULT_FEATURES
+    else:
+        whitelist_feature_bc = get_whitelist_features(whitelist_feature_bc)
+    whitelist_features = load_barcode_whitelist(whitelist_feature_bc)
 
-        # initialize records list
-        records = []
-        for seq in abutils.io.parse_fastx(str(input_file)):
-            seqs = [seq.sequence]
-            if check_rc:
-                seqs.append(abutils.tl.reverse_complement(seq.sequence))
-            for s in seqs:
-                # parse cell barcode, feature barcode and UMI
-                cell_bc = s[57:73][::-1]  # reverse the cell barcode given we are reading R2 (so it is in reverse)
-                feature_bc = s[10:25]
-                umi = s[47:57]
-                capture_seq = s[34:47]  # TSO sequence
-                R1 = s[73:]
+    # initialize records list
+    records = []
+    for seq in abutils.io.parse_fastx(str(input_file)):
+        seqs = [seq.sequence]
+        if check_rc:
+            seqs.append(abutils.tl.reverse_complement(seq.sequence))
+        for s in seqs:
+            # parse cell barcode, feature barcode and UMI
+            cell_bc = s[57:73][::-1]  # reverse the cell barcode given we are reading R2 (so it is in reverse)
+            feature_bc = s[10:25]
+            umi = s[47:57]
+            capture_seq = s[34:47]  # TSO sequence
+            R1 = s[73:]
 
-                if strict:
-                    if not one_mismatch_or_less(R1, "AGATCGGAAGAGCGTCG"):
-                        continue
-                    if not one_mismatch_or_less(capture_seq, "CCCATATAAGAAA"):
-                        continue
-                
-                # correct cell barcode and feature barcode
-                corrected_cell_bc = correct_barcode(cell_bc, whitelist_cells)
-                corrected_feature_bc = correct_barcode(feature_bc, whitelist_features)
-
-                if corrected_cell_bc is None or corrected_feature_bc is None:
+            if strict:
+                if not one_mismatch_or_less(R1, "AGATCGGAAGAGCGTCG"):
                     continue
+                if not one_mismatch_or_less(capture_seq, "CCCATATAAGAAA"):
+                    continue
+            
+            # correct cell barcode and feature barcode
+            corrected_cell_bc = correct_barcode(cell_bc, whitelist_cells)
+            corrected_feature_bc = correct_barcode(feature_bc, whitelist_features)
 
-                # build the record
-                records.append(
-                    {
-                        "cell_barcode": corrected_cell_bc,
-                        "umi": umi,
-                        "feature_barcode": corrected_feature_bc,
-                        # "seq_id": seq.id,             # not sure these are needed, kept them in case (also as a reminder)
-                        # "sequence": sequence,
-                    }
-                )
-                # all done!
-                break
+            if corrected_cell_bc is None or corrected_feature_bc is None:
+                continue
 
-        if records:
-            output_directory = Path(output_directory)
-            output_directory.mkdir(parents=True, exist_ok=True)
-            output_file = output_directory / f"bcdf_{output_name}.parquet"
-            df = pl.DataFrame(records)
-            df.write_parquet(output_file)
-            return str(output_file)
+            # build the record
+            records.append(
+                {
+                    "cell_barcode": corrected_cell_bc,
+                    "umi": umi,
+                    "feature_barcode": corrected_feature_bc,
+                    # "seq_id": seq.id,             # not sure these are needed, kept them in case (also as a reminder)
+                    # "sequence": sequence,
+                }
+            )
+            # all done!
+            break
 
-    except Exception as e:
-        print(f"Error processing {input_file}: {e}")
-        return None
+    if records:
+        output_directory = Path(output_directory)
+        output_directory.mkdir(parents=True, exist_ok=True)
+        output_file = output_directory / f"bcdf_{output_name}.parquet"
+        df = pl.DataFrame(records)
+        df.write_parquet(output_file)
+        return str(output_file)
 
 
 def parse_barcodes(
