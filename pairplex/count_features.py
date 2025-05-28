@@ -139,7 +139,7 @@ def count_features(
             parquet_chunks = []
             futures = [
                 executor.submit(
-                    parse_fbc, chunk, temp_directory, whitelist_cell_bc=whitelist_path, whitelist_feature_bc=antigen_barcodes, strict=False
+                    parse_fbc, chunk, parsed_directory, whitelist_cell_bc=whitelist_path, whitelist_feature_bc=antigen_barcodes, strict=False
                 )
                 for chunk in fastq_chunks
             ]
