@@ -237,7 +237,7 @@ def parse_fbc(
             seqs.append(abutils.tl.reverse_complement(seq.sequence))
         for s in seqs:
             # parse cell barcode, feature barcode and UMI
-            cell_bc = s[57:73]
+            cell_bc = s[57:73][::-1]  # reverse the cell barcode given we are reading R2 (so it is in reverse)
             feature_bc = s[10:25]
             umi = s[47:57]
             capture_seq = s[34:47]  # TSO sequence
