@@ -360,12 +360,21 @@ def run(
                 receptor=receptor,
                 mmseqs_threads=1,
             )
+            unpaired_df = abutils.io.to_polars(sequences)
+            unpaired_df = unpaired_df.join(
+                metadata_df.drop("consensus"),
+                how="left",
+                left_on="sequence_id",
+                right_on="name",
+            )
 
             # unpaired sequences
             unpaired_airr_file = annotated_directory / f"{name}_unpaired.tsv"
             unpaired_parquet_file = annotated_directory / f"{name}_unpaired.parquet"
-            abutils.io.to_airr(sequences, str(unpaired_airr_file))
-            abutils.io.to_parquet(sequences, str(unpaired_parquet_file))
+            unpaired_df.write_csv(str(unpaired_airr_file), separator="\t")
+            unpaired_df.write_parquet(str(unpaired_parquet_file))
+            # abutils.io.to_airr(sequences, str(unpaired_airr_file))
+            # abutils.io.to_parquet(sequences, str(unpaired_parquet_file))
             all_consensus_sequences += len(sequences)
             running_total_printer.set_description_str(
                 f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
@@ -378,11 +387,26 @@ def run(
             paired_parquet_file = annotated_directory / f"{name}_paired.parquet"
             pairs = abutils.tl.assign_pairs(sequences, delim="_", delim_occurance=-1)
             pairs = [p for p in pairs if len(p.heavies) == 1 and len(p.lights) == 1]
-            pairs_printer.set_description_str(f"{len(pairs)} paired sequences")
-            abutils.io.to_airr(pairs, str(paired_airr_file))
-            abutils.io.to_parquet(pairs, str(paired_parquet_file))
+            pair_df = abutils.io.to_polars(pairs)
+            pair_df = pair_df.filter(
+                ~pl.col("productivity_issues:0").str.contains("ambiguous")
+                & ~pl.col("productivity_issues:1").str.contains("ambiguous")
+                & ~pl.col("sequence_aa:0")
+                .str.strip_suffix("*")
+                .str.contains("*", literal=True)
+                & ~pl.col("sequence_aa:1")
+                .str.strip_suffix("*")
+                .str.contains("*", literal=True)
+                & (pl.col("v_germline_start:0") == 0)
+                & (pl.col("v_germline_start:1") == 0)
+            )
+            pairs_printer.set_description_str(f"{pair_df.shape[0]} paired sequences")
+            pair_df.write_csv(str(paired_airr_file), separator="\t")
+            pair_df.write_parquet(str(paired_parquet_file))
+            # abutils.io.to_airr(pairs, str(paired_airr_file))
+            # abutils.io.to_parquet(pairs, str(paired_parquet_file))
 
-            all_pairs += len(pairs)
+            all_pairs += pair_df.shape[0]
             running_total_printer.set_description_str(
                 f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
             )
