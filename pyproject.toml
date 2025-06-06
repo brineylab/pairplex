@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pairplex"
+dynamic = ["version"]
+authors = [
+    { name="Benjamin Nemoz", email="bnemoz@scripps.edu" },
+]
+description = "Demultiplex single-cell antibody repertoires with precision and paired insight."
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "abstar>=0.7.3",
+    "abutils>=0.5.3",
+    "click",
+    "natsort",
+    "polars",
+    "tqdm",
+]
+
+[project.urls]
+Homepage = "https://github.com/brineylab/pairplex"
+
+[project.scripts]
+pairplex = "pairplex.scripts.pairplex:cli"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."] # search in the root directory
+
+[tool.setuptools.package-data]
+"pairplex" = [
+    "barcodes/*",
+    "data/*",
+    "tests/*", # Preserving this as per MANIFEST.in
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "pairplex.version.__version__"}

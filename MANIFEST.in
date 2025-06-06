@@ -1,6 +1,0 @@
-include README.md
-include requirements.txt
-
-include pairplex/barcodes/*
-include pairplex/data/*
-include pairplex/tests/*
