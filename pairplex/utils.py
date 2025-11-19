@@ -235,7 +235,7 @@ def parse_barcodes(
 
 
 def greedy_clustering(
-    sequences: list[tuple[str, str]], identity_threshold: float = 0.95
+    sequences: list[tuple[str, str]], identity_threshold: float = 0.85
 ) -> list[list[str]]:
     """
     Clusters sequences using a greedy algorithm with Edlib.
@@ -262,16 +262,17 @@ def greedy_clustering(
             rep_id, rep_seq = cluster[0]
             rep_len = len(rep_seq)
 
-            # bail early if the length difference is too large
-            if seq_len / rep_len < identity_threshold:
-                continue
+            # # bail early if the length difference is too large
+            # if seq_len / rep_len < identity_threshold:
+            #     continue
 
             # edit distance
             res = edlib.align(seq_str, rep_seq, mode="NW", task="distance")
             edit_dist = res["editDistance"]
 
             # identity
-            identity = 1.0 - (edit_dist / max(seq_len, rep_len))
+            # identity = 1.0 - (edit_dist / max(seq_len, rep_len))
+            identity = 1.0 - (edit_dist / min(seq_len, rep_len))
             if identity >= identity_threshold:
                 cluster[1].append(seq_id)
                 placed = True
@@ -288,7 +289,7 @@ def process_droplet(
     name: str,
     partition_df: pl.DataFrame,
     temp_directory: str | Path = "/tmp",
-    clustering_threshold: float = 0.9,
+    clustering_threshold: float = 0.85,
     consensus_downsample: int = 100,
     min_cluster_reads: int = 3,
     min_cluster_umis: int = 2,
@@ -350,7 +351,7 @@ def process_droplet(
 
     clusters = greedy_clustering(
         zip(partition_df["seq_id"], partition_df["sequence"]),
-        identity_threshold=0.85,
+        identity_threshold=clustering_threshold,
     )
     clusters = sorted(clusters, key=lambda x: len(x), reverse=True)
 
