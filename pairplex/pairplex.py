@@ -360,11 +360,17 @@ def run(
             # --------------------
 
             main_pbar.set_postfix_str("annotating sequences", refresh=True)
+            # guard against MMSeqs threading issues with small datasets
+            consensus_count = filtered_df.shape[0]
+            mmseqs_threads = None
+            if consensus_count < 1000:
+                mmseqs_threads = 1
+            # run abstar
             sequences = abstar.run(
                 sequences=str(consensus_file),
                 germline_database=germline_database,
                 receptor=receptor,
-                mmseqs_threads=1,
+                mmseqs_threads=mmseqs_threads,
             )
 
             # unpaired sequences
