@@ -173,6 +173,7 @@ def run(
 
     # merge paired reads
     if merge_paired_reads:
+        print("Merging paired reads:")
         merge_directory = output_directory / "merged"
         merge_log_directory = log_directory / "merge"
         merge_directory.mkdir(parents=True, exist_ok=True)
@@ -183,7 +184,7 @@ def run(
             log_directory=merge_log_directory,
             schema=platform.lower(),
             debug=debug,
-            show_progress=False,
+            show_progress=True,
         )
 
     # setup the main progress bar (tracks input file completion)
