@@ -192,7 +192,8 @@ def run(
         desc="pairplex",
         position=0,
         leave=True,
-        dynamic_ncols=True,
+        # dynamic_ncols=True,
+        bar_format="{desc}{percentage:3.0f}%|{bar:25}{r_bar}",
     )
     blank1_printer = tqdm(total=0, bar_format=" ", position=1, leave=True)
     running_total_printer = tqdm(total=0, bar_format="{desc}", position=2, leave=True)
@@ -292,7 +293,8 @@ def run(
                 # desc="consensus sequences",
                 position=7,
                 leave=False,
-                dynamic_ncols=True,
+                # dynamic_ncols=True,
+                bar_format="{desc}{percentage:3.0f}%|{bar:25}{r_bar}",
             )
             consensus_printer = tqdm(
                 total=0, bar_format="{desc}", position=8, leave=False
