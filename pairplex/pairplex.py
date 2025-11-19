@@ -185,6 +185,7 @@ def run(
             debug=debug,
             show_progress=True,
         )
+        print("\n")
 
     # setup the main progress bar (tracks input file completion)
     main_pbar = tqdm(
