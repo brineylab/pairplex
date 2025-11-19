@@ -269,12 +269,18 @@ def run(
 
             # partition into separate parquet files by barcode
             main_pbar.set_postfix_str("partitioning barcodes", refresh=True)
-            partitions = df.partition_by("barcode", as_dict=True)
+            # partitions = df.partition_by("barcode", as_dict=True)
 
-            # filter partitinos by size
-            partitions = {
-                k: v for k, v in partitions.items() if v.shape[0] >= min_cluster_reads
-            }
+            # # filter partitinos by size
+            # partitions = {
+            #     k: v for k, v in partitions.items() if v.shape[0] >= min_cluster_reads
+            # }
+
+            # filter barcode groups by size before partitioning
+            df = df.filter(
+                pl.col("barcode").count().over("barcode") >= min_cluster_reads
+            )
+            partitions = df.partition_by("barcode", as_dict=True)
 
             # --------------------
             #      consensus
