@@ -350,6 +350,7 @@ def process_droplet(
         zip(partition_df["seq_id"], partition_df["sequence"]),
         identity_threshold=0.85,
     )
+    clusters = sorted(clusters, key=lambda x: len(x), reverse=True)
 
     for i, clust in enumerate(clusters):
         contig_name = f"{barcode}_contig-{i}"
