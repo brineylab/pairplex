@@ -382,7 +382,7 @@ def process_droplet(
         # filters
         if all(
             [
-                clust.size >= min_cluster_reads,
+                len(clust) >= min_cluster_reads,
                 n_umis >= min_cluster_umis,
                 cluster_fraction >= min_cluster_fraction,
             ]
