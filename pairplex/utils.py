@@ -253,6 +253,8 @@ def greedy_clustering(
     clusters = []
 
     for seq_id, seq_str in sorted_seqs:
+        if not seq_str:
+            continue
         seq_len = len(seq_str)
         placed = False
 
