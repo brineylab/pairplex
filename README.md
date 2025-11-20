@@ -42,10 +42,10 @@ While we generally use the CLI, PairPlex also provides a Python API to make it e
 
 ##### CLI
 ``` bash
-pairplex run <options> /path/to/sequencing_data /path/to/output_directory
+pairplex run /path/to/sequencing_data /path/to/output_directory
 ```
 
-Sequencing data can be provided as the path to a single FASTA/Q file or a directory containing one or more FASTA/Q files (optionally gzip compressed). If a directory is provided, all files in the directory will be processed.
+Sequencing data can be provided as a single FASTA/Q file or a directory containing one or more FASTA/Q files (optionally gzip compressed). If a directory is provided, all files in the directory will be processed (recursively).
 
 Providing the `merge_paired_reads` option will instruct PairPlex merge paired-end sequencing reads with [fastp](https://github.com/OpenGene/fastp) prior to processing, so the output of Illumina's `bcl2fastq` or Element's `bases2fastq` can be used directly as input:
 
