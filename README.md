@@ -12,7 +12,7 @@
 
 <br>
 
-`pairplex` uses combinatorial barcoding (inspired by [UDA-seq](https://doi.org/10.1038/s41592-024-02586-y)) to perform extremely high-throughput sequencing of natively paired antibodies.
+`pairplex` uses combinatorial barcoding (inspired by [UDA-seq](https://doi.org/10.1038/s41592-024-02586-y)) to perform cost-effective sequencing of large numbers of natively paired antibodies by massively overloading 10x Genomics reactions.
 
 <br>
 
