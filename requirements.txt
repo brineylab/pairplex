@@ -1,6 +1,0 @@
-abstar>=0.7.3
-abutils>=0.5.3
-click
-natsort
-polars
-tqdm

@@ -3,81 +3,83 @@
 ![](https://img.shields.io/pypi/pyversions/pairplex.svg)
 ![](https://img.shields.io/badge/license-MIT-blue.svg)
 
-# PairPlex
-Demultiplex single-cell antibody repertoires with native pairing.
----
-
-<img src="./pairplex/data/pairplex_logo_borders.png" alt="PairPlex Logo" width="400"/>
-
-Paired santibody sequences at high-throughput fr a fraction of the cost leaves you PairPlex? So were we!
-
-**PairPlex** uses combinatorial barcoding and single-cell RNA-seq to obtain **paired antibody sequences** in a **super high-throughput** fashion.
-
-In January 2025, a novel method was unveiled to massively increase the scale of single-cell sequencing by making use of a combinatorial indexing approach [1]. We took on the endeavor to adapt this approach to BCR/antibody repertoire sequencing, largely enhancing available methods to obtain natively-paired anitbody sequences at a high-throughput.
-In a nutshell, this method combines 10X-Genomics approach to VDJ sequencing with the throughput of bulkNGS techniques. Thanks to the use of a 5'RACE-based approach, the obtain antibody repertoire is largely unbiased. Maximal length (2x300bp) short reads-based sequencing ensure the hightest possible quality of sequencing. 
-Following sequencing, demultiPLEXing and PAIRing of sequences must be performed. PairPlex is a Python-coded pipeline that handles these tasks from sequencing data all the way to fully annotated AIRR-compatible paired sequences tables. 
-
-Full protocol is available here: [Protocols.io][2]  
-The python code for PairPlex is available in the present GitHub repository: [GitHub][3]  
-
-Using this approach and PairPlex, we generated a database of XX million natively paired antibody sequences from 8 healthy donors. In addition, we also sequenced the immune loci for these donors and annotated the resulting antibody repertoires using customized donor-matching germline databases, hence providing an outstanding antibody repertoire.
-
-This full dataset is made available here: [XXM-PairedAntibodyRepertoire] [4]  
-Antibody sequences will also be integrated to the Observed Antibody Space (OAS) database
-
-Welcome to a whole new antibody dimension! Yes, you too can be **PairPlex**!
+# PairPlex: large-scale natively paired antibody sequencing
 
 
+<p align="center">
+  <img src="./pairplex/data/pairplex_logo_borders.png" alt="pairplex Logo" width="400"/>
+</p>
 
-[1]: Li, Y., Huang, Z., Xu, L. et al. UDA-seq: universal droplet microfluidics-based combinatorial indexing for massive-scale multimodal single-cell sequencing. Nat Methods (2025). https://doi.org/10.1038/s41592-024-02586-y  
-[2]: https://protocols.io/blablabla  
-[3]: https://github.com/brineylab/pairplex  
-[4]: Link-to-database  
+<br>
 
+PairPlex uses combinatorial barcoding (inspired by [UDA-seq](https://doi.org/10.1038/s41592-024-02586-y)) to perform cost-effective sequencing of large numbers of natively paired antibodies by massively overloading 10x Genomics reactions.
 
+<br>
 
-## Requirements and Installation
-PairPlex makes extensive use of the following libraries: 
-Installation of these should however be automatically handled (with the correct versions) by the install script
-
-To install PairPlex, two options:
-##### With Pypi
-`pip install pairplex`
-##### From this repository
+## Installation
+PairPlex can be installed with `pip`:
+``` bash
+pip install pairplex
 ```
+
+Alternatively, you can install from source (which may not be entirely stable, so use at your own risk):
+``` bash
 git clone https://github.com/brineylab/pairplex
 cd pairplex
-pip install ./
+pip install .
 ```
-##### Verify installation
-Verifying correct installation can be done by checking the version. In the Terminal interface, use:
-`pairplex --version`
-The version number should be returned
+
+Installation can be quickly confirmed by checking the version:
+``` bash
+pairplex version
+```
+If the current version is displayed, installation was successful.
+
+<br>
 
 ## Usage
-PairPlex can be used from the CLI or from the Python API
 
 ##### CLI
-`pairplex run ...`
+``` bash
+pairplex run /path/to/sequencing_data /path/to/output_directory
+```
+
+Sequencing data can be provided as a single FASTA/Q file or a directory containing one or more FASTA/Q files (optionally gzip compressed). If a directory is provided, all files in the directory will be processed (recursively).
+
+Providing the `merge_paired_reads` option will instruct PairPlex merge paired-end sequencing reads with [fastp](https://github.com/OpenGene/fastp) prior to processing, so the output of Illumina's `bcl2fastq` or Element's `bases2fastq` can be used directly as input:
+
+``` bash
+pairplex run --merge_paired_reads /path/to/paired_reads /path/to/output_directory
+```
+
+By default, we assume Illumina-style naming conventions for paired-end read files. For paired FASTQ files produced by Element's `bases2fastq`, the `platform` option should be set to `element`.
+``` bash
+pairplex run --merge_paired_reads --platform element /path/to/paired_reads /path/to/output_directory
+```
+> [!NOTE]
+>If the sequencing data is already merged (or wasn't paired-end to begin with), the `platform` option is not used, since the file naming conventions are only needed to match file pairs for read merging.
+
+The complete list of CLI options can be displayed by running:
+``` bash
+pairplex run --help
+```
 
 ##### API
+``` python
+import pairplex
+
+pairplex.run(
+    sequences="/path/to/sequencing_data",
+    output_directory="/path/to/output_directory",
+    merge_paired_reads=True,
+)
 ```
-pairplex(sequencing_folder='./SequencingRun/', verbose=False)
-```
 
-##### Options
-Many options are available. Here's a quick overview:
-
-
-## Reporting bugs
-
+<br>
 
 ## Citation
 If you are using Pairplex or the dataset generated of paired antibody sequences, please cite:
 
-**Large-scale antibody repertoire leaves you PairPlex**  
-_some awesome people at the Briney lab_  
-soon-to-be-published  
 
 
 

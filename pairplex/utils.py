@@ -15,13 +15,15 @@
 # along with PairPlex. If not, see <http://www.gnu.org/licenses/>.
 
 
-import logging
-import os
+# import logging
+# import os
 from pathlib import Path
 from typing import Set
 
 import abutils
+import edlib
 import polars as pl
+from spoa import poa
 
 from .version import __version__
 
@@ -232,11 +234,62 @@ def parse_barcodes(
         return str(output_file)
 
 
+def greedy_clustering(
+    sequences: list[tuple[str, str]], identity_threshold: float = 0.85
+) -> list[list[str]]:
+    """
+    Clusters sequences using a greedy algorithm with Edlib.
+
+    Args:
+        sequences: List of (id, sequence_string) tuples.
+        identity_threshold: Float (0.0-1.0), e.g., 0.95 for 95% identity.
+
+    Returns:
+        List of lists, where each inner list contains sequence IDs for a cluster.
+        The first ID in each list is the representative.
+    """
+    # greedy clustering needs length-sorted sequences (longest first)
+    sorted_seqs = sorted(sequences, key=lambda x: len(x[1]), reverse=True)
+    clusters = []
+
+    for seq_id, seq_str in sorted_seqs:
+        if not seq_str:
+            continue
+        seq_len = len(seq_str)
+        placed = False
+
+        for cluster in clusters:
+            rep_id, rep_seq = cluster[0]
+            rep_len = len(rep_seq)
+
+            # # bail early if the length difference is too large
+            # if seq_len / rep_len < identity_threshold:
+            #     continue
+
+            # edit distance
+            res = edlib.align(seq_str, rep_seq, mode="NW", task="distance")
+            edit_dist = res["editDistance"]
+
+            # identity
+            # identity = 1.0 - (edit_dist / max(seq_len, rep_len))
+            identity = 1.0 - (edit_dist / min(seq_len, rep_len))
+            if identity >= identity_threshold:
+                cluster[1].append(seq_id)
+                placed = True
+                break
+
+        if not placed:
+            clusters.append([(seq_id, seq_str), [seq_id]])
+
+    # return just the list of sequence IDs
+    return [c[1] for c in clusters]
+
+
 def process_droplet(
     name: str,
     partition_df: pl.DataFrame,
     temp_directory: str | Path = "/tmp",
-    clustering_threshold: float = 0.9,
+    clustering_threshold: float = 0.85,
     consensus_downsample: int = 100,
     min_cluster_reads: int = 3,
     min_cluster_umis: int = 2,
@@ -289,42 +342,50 @@ def process_droplet(
     barcode = name.split("_")[-1]
     metadata = []
 
-    sequences = abutils.io.from_polars(
-        partition_df, id_key="seq_id", sequence_key="sequence"
+    # sequences = abutils.io.from_polars(
+    #     partition_df, id_key="seq_id", sequence_key="sequence"
+    # )
+    # clusters = abutils.tl.cluster(
+    #     sequences, threshold=clustering_threshold, temp_dir=temp_directory, debug=debug
+    # )
+
+    clusters = greedy_clustering(
+        zip(partition_df["seq_id"], partition_df["sequence"]),
+        identity_threshold=clustering_threshold,
     )
-    clusters = abutils.tl.cluster(
-        sequences, threshold=clustering_threshold, temp_dir=temp_directory, debug=debug
-    )
+    clusters = sorted(clusters, key=lambda x: len(x), reverse=True)
+
     for i, clust in enumerate(clusters):
         contig_name = f"{barcode}_contig-{i}"
-        cluster_df = partition_df.filter(pl.col("seq_id").is_in(clust.seq_ids))
+        cluster_df = partition_df.filter(pl.col("seq_id").is_in(clust))
         n_umis = len(cluster_df["umi"].unique())
-        cluster_fraction = clust.size / len(sequences)
+        cluster_fraction = len(clust) / partition_df.shape[0]
 
         # consensus
-        if clust.size > 1:
-            consensus = abutils.tl.make_consensus(
-                clust.sequences,
-                downsample_to=consensus_downsample,
-                name=contig_name,
-                temp_dir = temp_directory
-            )
-        else:
-            consensus = clust.sequences[0]
+        # if clust.size > 1:
+        #     consensus = abutils.tl.make_consensus(
+        #         clust.sequences,
+        #         downsample_to=consensus_downsample,
+        #         name=contig_name,
+        #         temp_dir=temp_directory,
+        #     )
+        # else:
+        #     consensus = clust.sequences[0]
+        consensus, msa = poa(cluster_df["sequence"].to_list())
 
         # metadata
         meta = {
             "name": contig_name,
-            "reads": clust.size,
+            "reads": len(clust),
             "umis": n_umis,
             "cluster_fraction": cluster_fraction,
-            "consensus": consensus.sequence,
+            "consensus": consensus,
         }
 
         # filters
         if all(
             [
-                clust.size >= min_cluster_reads,
+                len(clust) >= min_cluster_reads,
                 n_umis >= min_cluster_umis,
                 cluster_fraction >= min_cluster_fraction,
             ]

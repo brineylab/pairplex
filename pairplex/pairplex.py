@@ -183,8 +183,9 @@ def run(
             log_directory=merge_log_directory,
             schema=platform.lower(),
             debug=debug,
-            show_progress=False,
+            show_progress=True,
         )
+        print("\n")
 
     # setup the main progress bar (tracks input file completion)
     main_pbar = tqdm(
@@ -192,7 +193,8 @@ def run(
         desc="pairplex",
         position=0,
         leave=True,
-        dynamic_ncols=True,
+        # dynamic_ncols=True,
+        bar_format="{desc}{percentage:3.0f}%|{bar:25}{r_bar}",
     )
     blank1_printer = tqdm(total=0, bar_format=" ", position=1, leave=True)
     running_total_printer = tqdm(total=0, bar_format="{desc}", position=2, leave=True)
@@ -276,6 +278,12 @@ def run(
                 k: v for k, v in partitions.items() if v.shape[0] >= min_cluster_reads
             }
 
+            # filter barcode groups by size before partitioning
+            # df = df.filter(
+            #     pl.col("barcode").count().over("barcode") >= min_cluster_reads
+            # )
+            # partitions = df.partition_by("barcode", as_dict=True)
+
             # --------------------
             #      consensus
             # --------------------
@@ -286,7 +294,8 @@ def run(
                 # desc="consensus sequences",
                 position=7,
                 leave=False,
-                dynamic_ncols=True,
+                # dynamic_ncols=True,
+                bar_format="{desc}{percentage:3.0f}%|{bar:25}{r_bar}",
             )
             consensus_printer = tqdm(
                 total=0, bar_format="{desc}", position=8, leave=False
@@ -354,11 +363,17 @@ def run(
             # --------------------
 
             main_pbar.set_postfix_str("annotating sequences", refresh=True)
+            # guard against MMSeqs threading issues with small datasets
+            consensus_count = filtered_df.shape[0]
+            mmseqs_threads = None
+            if consensus_count < 1000:
+                mmseqs_threads = 1
+            # run abstar
             sequences = abstar.run(
                 sequences=str(consensus_file),
                 germline_database=germline_database,
                 receptor=receptor,
-                mmseqs_threads=1,
+                mmseqs_threads=mmseqs_threads,
             )
 
             # unpaired sequences
