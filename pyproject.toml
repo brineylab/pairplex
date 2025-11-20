@@ -39,7 +39,7 @@ dependencies = [
 Homepage = "https://github.com/brineylab/pairplex"
 
 [project.scripts]
-pairplex = "pairplex.scripts.pairplex:cli"
+pairplex = "pairplex.cli.pairplex:cli"
 
 [project.optional-dependencies]
 test = [
