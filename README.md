@@ -38,7 +38,6 @@ If the current version is displayed, installation was successful.
 <br>
 
 ## Usage
-While we generally use the CLI, PairPlex also provides a Python API to make it easier to integrate into existing workflows.
 
 ##### CLI
 ``` bash
