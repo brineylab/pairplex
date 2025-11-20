@@ -40,8 +40,6 @@ If the current version is displayed, installation was successful.
 ## Usage
 While we generally use the CLI, PairPlex also provides a Python API to make it easier to integrate into existing workflows.
 
-<br>
-
 ##### CLI
 ``` bash
 pairplex run <options> /path/to/sequencing_data /path/to/output_directory
@@ -60,14 +58,12 @@ By default, we assume Illumina-style naming conventions for paired-end read file
 pairplex run --merge_paired_reads --platform element /path/to/paired_reads /path/to/output_directory
 ```
 > [!NOTE]
->If the sequencing data is already merged (or wasn't paired-end to begin with), the `platform` option is not used, since the file naming conventions are only used to identify matched file pairs for read merging.
+>If the sequencing data is already merged (or wasn't paired-end to begin with), the `platform` option is not used, since the file naming conventions are only needed to match file pairs for read merging.
 
 The complete list of CLI options can be displayed by running:
 ``` bash
 pairplex run --help
 ```
-
-<br>
 
 ##### API
 ``` python
