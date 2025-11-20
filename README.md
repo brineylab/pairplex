@@ -29,7 +29,7 @@ cd pairplex
 pip install .
 ```
 
-Installation can be quidkly confirmed by checking the version:
+Installation can be quickly confirmed by checking the version:
 ``` bash
 pairplex version
 ```
