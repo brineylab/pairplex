@@ -17,7 +17,7 @@
 <br>
 
 ## Installation
-PairPlex can be easily installed using `pip`:
+PairPlex can be installed with `pip`:
 ``` bash
 pip install pairplex
 ```
