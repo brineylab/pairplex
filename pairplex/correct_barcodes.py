@@ -227,4 +227,5 @@ def run(
             annotation_printer.close()
             merging_printer.close()
 
+    print("\n")
     main_pbar.close()
