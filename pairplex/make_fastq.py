@@ -16,33 +16,37 @@
 
 
 import logging
-from pathlib import Path
-from typing import Optional
 import subprocess as sp
+from pathlib import Path
 
 
-def make_fastq(
-    sequence_dir: str,
-    output_directory: str,
-    samplesheet: Optional[str] = None,
+def run(
+    sequence_dir: str | Path,
+    output_directory: str | Path,
+    samplesheet: str | Path | None = None,
     platform: str = "illumina",
-    debug: Optional[bool] = False,
+    debug: bool = False,
 ) -> str:
     """
     Performs basecalling from BCL files to generate FASTQ files.
 
     Parameters
     ----------
-    sequences : str
+    sequence_dir : str | Path
         Path to the sequences file.
-    output_directory : str
+    output_directory : str | Path
         Path to the output directory.
-    platform : str, optional
-        Sequencing platform, by default "illumina"
+    samplesheet : str | Path | None
+        Path to the samplesheet file.
+    platform : str
+        Sequencing platform, options are "illumina" or "element".
+    debug : bool
+        Whether to enable debug mode.
 
     Returns
     -------
-    The path of the output_directory
+    str
+        The path of the output directory.
     """
 
     # Preflight
@@ -52,7 +56,9 @@ def make_fastq(
 
     supported_platforms = {"illumina", "element"}
     if platform.lower() not in supported_platforms:
-        raise ValueError(f"Platform '{platform}' is not supported. Supported: {supported_platforms}")
+        raise ValueError(
+            f"Platform '{platform}' is not supported. Supported: {supported_platforms}"
+        )
 
     out_dir = Path(output_directory)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -67,18 +73,24 @@ def make_fastq(
             csv_samplesheet = samplesheet_path
     else:
         for f in seq_dir.iterdir():
-            if f.suffix.lower() == ".csv" and any(["samplesheet" in f.name.lower(), "runmanifest" in f.name.lower()]):
+            if f.suffix.lower() == ".csv" and any(
+                ["samplesheet" in f.name.lower(), "runmanifest" in f.name.lower()]
+            ):
                 csv_samplesheet = f
 
     if not csv_samplesheet:
-        raise FileNotFoundError("No samplesheet found. Please provide a samplesheet or place it in the sequence directory.")
+        raise FileNotFoundError(
+            "No samplesheet found. Please provide a samplesheet or place it in the sequence directory."
+        )
 
     # Basecalling
     if platform.lower() == "illumina":
         basecalling_cmd = f"bcl2fastq --runfolder-dir {seq_dir} --output-dir {out_dir} --sample-sheet {csv_samplesheet}"
 
     elif platform.lower() == "element":
-        basecalling_cmd = f"bases2fastq {seq_dir} {out_dir} --run-manifest {csv_samplesheet}"
+        basecalling_cmd = (
+            f"bases2fastq {seq_dir} {out_dir} --run-manifest {csv_samplesheet}"
+        )
         if not debug:
             basecalling_cmd += " --skip-qc-report"
 
@@ -115,7 +127,7 @@ def convert_yaml_to_csv(yaml_file: Path, platform: str) -> Path:
     if platform is "illumina":
         csv_file = build_illumina_samplesheet(yaml_file)
 
-    elif platform is "element": 
+    elif platform is "element":
         csv_file = build_elemnt_runmanifest(yaml_file)
 
     return csv_file

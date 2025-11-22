@@ -19,7 +19,8 @@ from pathlib import Path
 
 import click
 
-from ..make_fastq import make_fastq as make_fastq_pairplex
+from ..correct_barcodes import run as run_correct_barcodes
+from ..make_fastq import run as run_make_fastq
 from ..pairplex import run as run_pairplex
 from ..version import __version__
 
@@ -138,13 +139,75 @@ def run(
     )
 
 
-
+@cli.command()
+@click.argument("sequences", type=click.Path(exists=True))
+@click.argument("output_directory", type=click.Path())
+@click.option(
+    "--temp_directory",
+    type=click.Path(),
+    default="/tmp",
+    help="Temporary directory for intermediate files",
+)
+@click.option(
+    "--whitelist_path",
+    type=click.Path(),
+    default=None,
+    help="Path to the whitelist file or name of a built-in whitelist",
+)
+@click.option(
+    "--check_rc",
+    is_flag=True,
+    help="Whether to check the reverse complement of the barcodes",
+)
+@click.option(
+    "--annotate/--no-annotate",
+    default=True,
+    help="Whether to annotate the sequences",
+)
+@click.option(
+    "--receptor", type=click.Choice(["bcr", "tcr"]), default="bcr", help="Receptor type"
+)
+@click.option(
+    "--germline_database",
+    type=str,
+    default="human",
+    help="Germline database for V(D)J assignment",
+)
+@click.option(
+    "--debug/--no-debug",
+    default=False,
+    help="Whether to enable debug mode, which saves all temporary files to ease troubleshooting",
+)
+@click.option("--quiet", is_flag=True, help="Whether to suppress output")
+def correct_barcodes(
+    sequences: str | Path,
+    output_directory: str | Path,
+    temp_directory: str | Path,
+    whitelist_path: str | Path | None,
+    check_rc: bool,
+    annotate: bool,
+    receptor: str,
+    germline_database: str,
+    debug: bool,
+    quiet: bool,
+):
+    run_correct_barcodes(
+        sequences=sequences,
+        output_directory=output_directory,
+        temp_directory=temp_directory,
+        whitelist_path=whitelist_path,
+        check_rc=check_rc,
+        annotate=annotate,
+        receptor=receptor,
+        germline_database=germline_database,
+        debug=debug,
+        quiet=quiet,
+    )
 
 
 @cli.command()
 @click.argument("sequencing_folder", type=click.Path(exists=True))
 @click.argument("output_directory", type=click.Path())
-
 @click.option(
     "--samplesheet",
     type=click.Path(),
@@ -163,7 +226,6 @@ def run(
     default=False,
     help="Whether to enable debug mode, which saves all temporary files to ease troubleshooting",
 )
-
 def make_fastq(
     sequencing_folder: str | Path,
     output_directory: str | Path,
@@ -171,8 +233,7 @@ def make_fastq(
     platform: str,
     debug: bool,
 ):
-    
-    make_fastq_pairplex(
+    run_make_fastq(
         sequencing_folder=sequencing_folder,
         output_directory=output_directory,
         samplesheet=samplesheet,
