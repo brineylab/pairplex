@@ -113,7 +113,7 @@ def run(
 
     main_pbar = tqdm(
         total=len(input_files),
-        desc="correcting barcodes",
+        desc="correcting barcodes: ",
         position=0,
         leave=True,
         bar_format="{desc}{percentage:3.0f}%|{bar:25}{r_bar}",
@@ -156,7 +156,7 @@ def run(
 
             parse_pbar = tqdm(
                 total=len(futures),
-                desc="parse barcodes",
+                desc="parse barcodes: ",
                 position=4,
                 leave=False,
                 bar_format="{desc}{percentage:3.0f}%|{bar:25}{r_bar}",
