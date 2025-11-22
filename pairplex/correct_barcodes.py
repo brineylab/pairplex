@@ -17,6 +17,7 @@
 
 import multiprocessing as mp
 import os
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -217,4 +218,13 @@ def run(
                         os.remove(f)
 
             main_pbar.update(1)
+
+            # close out sub-progress bars
+            time.sleep(2)
+            name_printer.close()
+            seqs_printer.close()
+            parse_pbar.close()
+            annotation_printer.close()
+            merging_printer.close()
+
     main_pbar.close()
