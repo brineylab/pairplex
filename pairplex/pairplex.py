@@ -348,6 +348,12 @@ def run(
 
             # write consensus sequences to file
             consensus_file = consensus_directory / f"{name}.fasta"
+            if metadata_df.is_empty():
+                consensus_printer.set_description_str(
+                    f"{droplet_count} droplet barcodes | 0 consensus sequences"
+                )
+                consensus_file.touch()
+                continue
             filtered_df = metadata_df.filter(pl.col("pass_filters"))
             with consensus_file.open("w") as f:
                 for _name, _consensus in zip(
