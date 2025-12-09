@@ -222,6 +222,19 @@ def run(
             input_file = Path(input_file)
             name = input_file.stem
             name_printer.set_description_str(f"---- {name} ----")
+
+            # check to make sure the input file is FASTA/Q (and not empty)
+            if abutils.io.determine_fastx_format(str(input_file)) is None:
+                # file is either empty or not FASTA/Q, so we skip it
+                seqs_printer.set_description_str("0 input sequences")
+                # close out progress bars
+                time.sleep(2)
+                name_printer.close()
+                seqs_printer.close()
+                valids_printer.close()
+                main_pbar.update(1)
+                continue
+
             # count sequences
             input_count = 0
             for s in abutils.io.parse_fastx(str(input_file)):
