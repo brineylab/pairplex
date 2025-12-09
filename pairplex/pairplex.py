@@ -211,6 +211,11 @@ def run(
         max_workers=mp.cpu_count(), mp_context=mp.get_context("spawn")
     ) as executor:
         for input_file in natsorted(input_files):
+            # Checking for empty file, as this will break later steps
+            if os.path.getsize(input_file) == 0:
+                main_pbar.set_postfix_str("partitioning barcodes", refresh=True)
+                continue
+
             to_delete = []
 
             # setup text printers (using tqdm so they get cleared once file is processed)
