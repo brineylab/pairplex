@@ -269,6 +269,12 @@ def run(
             to_delete.extend(parquet_chunks)
 
             # concatenate parsed data into a single dataframe
+            if parquet_chunks == []:
+                valids_printer.set_description_str("0 sequences with valid barcodes")
+                running_total_printer.set_description_str(
+                    f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
+                )
+                continue
             concat_parquet = abutils.io.concatenate_parquet(
                 parquet_chunks, parsed_directory / f"{name}.parquet"
             )
