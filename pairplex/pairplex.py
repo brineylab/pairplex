@@ -389,7 +389,7 @@ def run(
 
             main_pbar.set_postfix_str("annotating sequences", refresh=True)
             # failsafe for empty consensus files
-            if consensus_count == 0:
+            if consensus_count == 0 or os.path.getsize(consensus_file) == 0:
                 continue
             # guard against MMSeqs threading issues with small datasets
             consensus_count = filtered_df.shape[0]
