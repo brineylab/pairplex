@@ -404,37 +404,39 @@ def run(
                 mmseqs_threads=mmseqs_threads,
             )
 
-            # unpaired sequences
-            unpaired_airr_file = annotated_directory / f"{name}_unpaired.tsv"
-            unpaired_parquet_file = annotated_directory / f"{name}_unpaired.parquet"
-            abutils.io.to_airr(
-                sequences, str(unpaired_airr_file), drop_na_columns=False
-            )
-            abutils.io.to_parquet(
-                sequences, str(unpaired_parquet_file), drop_na_columns=False
-            )
-            all_consensus_sequences += len(sequences)
-            running_total_printer.set_description_str(
-                f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
-            )
+            if len(sequences) > 1: # A single sequence cannot be paired and will cause issues
+                
+                # unpaired sequences
+                unpaired_airr_file = annotated_directory / f"{name}_unpaired.tsv"
+                unpaired_parquet_file = annotated_directory / f"{name}_unpaired.parquet"
+                abutils.io.to_airr(
+                    sequences, str(unpaired_airr_file), drop_na_columns=False
+                )
+                abutils.io.to_parquet(
+                    sequences, str(unpaired_parquet_file), drop_na_columns=False
+                )
+                all_consensus_sequences += len(sequences)
+                running_total_printer.set_description_str(
+                    f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
+                )
 
-            # paired sequences
-            main_pbar.set_postfix_str("identifying pairs", refresh=True)
-            pairs_printer = tqdm(total=0, bar_format="{desc}", position=9, leave=False)
-            paired_airr_file = annotated_directory / f"{name}_paired.tsv"
-            paired_parquet_file = annotated_directory / f"{name}_paired.parquet"
-            pairs = abutils.tl.assign_pairs(sequences, delim="_", delim_occurance=-1)
-            pairs = [p for p in pairs if len(p.heavies) == 1 and len(p.lights) == 1]
-            pairs_printer.set_description_str(f"{len(pairs)} paired sequences")
-            abutils.io.to_airr(pairs, str(paired_airr_file), drop_na_columns=False)
-            abutils.io.to_parquet(
-                pairs, str(paired_parquet_file), drop_na_columns=False
-            )
+                # paired sequences
+                main_pbar.set_postfix_str("identifying pairs", refresh=True)
+                pairs_printer = tqdm(total=0, bar_format="{desc}", position=9, leave=False)
+                paired_airr_file = annotated_directory / f"{name}_paired.tsv"
+                paired_parquet_file = annotated_directory / f"{name}_paired.parquet"
+                pairs = abutils.tl.assign_pairs(sequences, delim="_", delim_occurance=-1)
+                pairs = [p for p in pairs if len(p.heavies) == 1 and len(p.lights) == 1]
+                pairs_printer.set_description_str(f"{len(pairs)} paired sequences")
+                abutils.io.to_airr(pairs, str(paired_airr_file), drop_na_columns=False)
+                abutils.io.to_parquet(
+                    pairs, str(paired_parquet_file), drop_na_columns=False
+                )
 
-            all_pairs += len(pairs)
-            running_total_printer.set_description_str(
-                f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
-            )
+                all_pairs += len(pairs)
+                running_total_printer.set_description_str(
+                    f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
+                )
 
             # --------------------
             #      cleanup
