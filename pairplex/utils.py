@@ -184,7 +184,7 @@ def parse_fbc(
     strict: bool = True,
 ) -> str | None:
     """
-    Process a chunk of fastq file to extract cell barcode feature barcode and UMIs based on cpature sequence (TSO) and R1 adaptor.
+    Process a chunk of fastq file to extract cell barcode feature barcode and UMIs based on capture sequence (TSO) and R1 adaptor.
 
     Parameters
     ----------

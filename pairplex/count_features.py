@@ -22,7 +22,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing as mp
 import polars as pl
 
-from .utils import parse_fbc, load_barcode_whitelist
+from .utils import parse_fbc, load_barcode_whitelist, get_whitelist_features, DEFAULT_FEATURES
 
 def count_features(
     sequences: str | Path,
@@ -106,7 +106,7 @@ def count_features(
         max_workers=mp.cpu_count(), mp_context=mp.get_context("spawn")
     ) as executor:
         for input_file in natsorted(input_files):
-            to_delete = []
+            to_delete: list[str | Path] = []
 
             name_printer = tqdm(total=0, bar_format="{desc}", position=4, leave=False)
             seqs_printer = tqdm(total=0, bar_format="{desc}", position=5, leave=False)
@@ -136,7 +136,7 @@ def count_features(
             ########################
 
             main_pbar.set_postfix_str("parsing barcodes", refresh=True)
-            parquet_chunks = []
+            parquet_chunks: list[str] = []
             futures = [
                 executor.submit(
                     parse_fbc, chunk, parsed_directory, whitelist_cell_bc=whitelist_path, whitelist_feature_bc=antigen_barcodes, strict=False
@@ -174,37 +174,47 @@ def count_features(
             # count valid barcodes
             main_pbar.set_postfix_str("counting valid barcodes", refresh=True)
 
-            total_counts = {}
+            # load antigen barcode whitelist once (resolve None → built-in default)
+            _feature_bc_path = DEFAULT_FEATURES if antigen_barcodes is None else get_whitelist_features(antigen_barcodes)
+            ag_barcodes = load_barcode_whitelist(_feature_bc_path)
+
+            total_counts: dict[str, dict[str, dict[str, int]]] = {}
 
             for cell_bc, table in partitions.items():
                 # Ensure cell_bc is a string or something hashable
                 if isinstance(cell_bc, tuple):
                     cell_bc = cell_bc[0]
+                cell_bc = str(cell_bc)
 
-                # Compute value counts of 'fbc' column
-                counts = table.group_by("feature_barcode").count()
+                # Count reads per feature barcode
+                read_counts = table.group_by("feature_barcode").count()
+                read_counts_dict = dict(zip(read_counts['feature_barcode'].to_list(), read_counts['count'].to_list()))
 
-                # Convert to dict for quick lookup: {'barcode1': count1, 'barcode2': count2, ...}
-                counts_dict = dict(zip(counts['feature_barcode'].to_list(), counts['count'].to_list()))
+                # Count unique UMIs per feature barcode
+                umi_counts = table.group_by("feature_barcode").agg(pl.col("umi").n_unique().alias("umi_count"))
+                umi_counts_dict = dict(zip(umi_counts['feature_barcode'].to_list(), umi_counts['umi_count'].to_list()))
 
-                # Counts the per-cell antige-barcodes and store in dictionary
-                ag_barcodes = load_barcode_whitelist(antigen_barcodes)
-                if ag_barcodes is None:
-                    raise ValueError("No antigen barcodes provided or found.")
-                cell_counts = {ag_barcode: counts_dict.get(ag_barcode, 0) for ag_barcode in ag_barcodes}
+                # Store both read and UMI counts for every antigen barcode in the whitelist
+                cell_counts = {
+                    ag_barcode: {
+                        "reads": read_counts_dict.get(ag_barcode, 0),
+                        "umis": umi_counts_dict.get(ag_barcode, 0),
+                    }
+                    for ag_barcode in ag_barcodes
+                }
 
                 # Store in main result
                 total_counts[cell_bc] = cell_counts
 
-            # Convert the total_counts dictionary to a DataFrame
-            dfs = []
-            for k, v in total_counts.items():
-                data = {'index': [k]}
-                for k2, v2 in total_counts[k].items():
-                    data[k2] = [v2]
-                _df = pl.DataFrame(data)
-                dfs.append(_df)
-            df = pl.concat(dfs)
+            # Convert the total_counts dictionary to a DataFrame (one row per cell)
+            rows = []
+            for cell_bc, ag_counts in total_counts.items():
+                row: dict[str, str | int] = {"index": cell_bc}
+                for ag_bc, counts in ag_counts.items():
+                    row[f"{ag_bc}_reads"] = counts["reads"]
+                    row[f"{ag_bc}_umis"] = counts["umis"]
+                rows.append(row)
+            df = pl.DataFrame(rows)
 
             # Save the DataFrame to a parquet file
             parquet_file = output_directory / f"{name}_counts.parquet"
@@ -215,6 +225,7 @@ def count_features(
 
             # clean up temporary files
             for f in to_delete:
+                f = Path(f)
                 if f.exists():
                     f.unlink()
 
