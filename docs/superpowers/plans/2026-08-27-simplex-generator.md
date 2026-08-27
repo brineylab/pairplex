@@ -1,5 +1,13 @@
 # SimPlex Generator Implementation Plan
 
+> **⚠️ SUPERSEDED (2026-08-27, post design review).** This plan implements the v1 design and
+> has known blockers: the ambient model is a read-level barcode-swap (should be molecule-level
+> free-molecule redistribution retaining barcode), the scorer is not keyed by `(well, barcode)`,
+> and the impl is not streaming as claimed. See revised design
+> `docs/superpowers/specs/2026-08-27-simplex-generator-design.md` (v2). Tasks 1–3 are largely
+> reusable; Tasks 4, 5, 8, 11 and the scale approach will be rewritten. **Do not execute as-is.**
+> A new plan targeting Phase 0–2 of the v2 roadmap will replace this after spec review.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build `simplex`, a sibling package that turns real paired antibody parquet into synthetic "raw sequencing" FASTQ (per well) with tunable wet-lab knobs and known ground truth, so we can stress-test PairPlex and find the best pairing thresholds.
