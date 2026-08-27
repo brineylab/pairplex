@@ -211,6 +211,12 @@ def parse_barcodes(
             seqs.append(abutils.tl.reverse_complement(seq.sequence))
         for s in seqs:
             # # parse barcode and UMI
+            # NOTE: barcode/UMI/sequence are extracted at FIXED offsets (0:16, 16:26, 36:),
+            # which assumes the read begins exactly at the 16bp 10x cell barcode, followed by
+            # the canonical 10x TSO, with no leading adapter or other sequence. Any leader
+            # before the barcode will silently shift these offsets and corrupt extraction.
+            # This is a known yield fragility that should be revisited (e.g. by locating the
+            # TSO/barcode via pattern matching rather than assuming a fixed position).
             sequence = s[36:].lstrip("G")  # remove any remaining Gs from the TSO
             barcode = s[:16]
             umi = s[16:26]

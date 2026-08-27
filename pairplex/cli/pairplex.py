@@ -69,7 +69,7 @@ def version():
     "--min_cluster_umis",
     type=int,
     default=1,
-    help="Minimum number of UMIs in a cluster",
+    help="Minimum number of UMIs in a cluster. Defaults to 1; 2 is recommended for datasets with heavy ambient contamination.",
 )
 @click.option(
     "--min_cluster_fraction",
