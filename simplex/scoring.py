@@ -1,3 +1,12 @@
+"""Scorer: evaluates a PairPlex output against SimPlex ground truth.
+
+Final stage of the cells -> molecules -> routing -> reads -> truth -> scoring pipeline.
+Reads the `truth_components`/`truth_barcodes` tables written by `truth.py` (via
+`io.write_truth`) and one or more PairPlex paired-output parquets, and produces
+`pair_scores` (one row per PairPlex-returned pair) and `key_scores` (one row per truth
+`(well, barcode)` key, including keys PairPlex returned nothing for) per the frozen
+scoring contract (design doc S6).
+"""
 import re
 from pathlib import Path
 import polars as pl
@@ -5,6 +14,9 @@ from .matching import candidates, resolve
 _LIGHT=("IGK","IGL")
 
 def _files(x):
+    """Normalize `x` (a single path, a directory, or a list of paths) into a list of
+    paired-output parquet paths. A directory is globbed for `**/*_paired.parquet`.
+    """
     if isinstance(x,(list,tuple)): return [Path(p) for p in x]
     x=Path(x)
     return sorted(x.glob("**/*_paired.parquet")) if x.is_dir() else [x]
@@ -12,6 +24,7 @@ def _files(x):
 def _bc(sid): return re.split(r"_contig",sid)[0] if sid else sid
 
 def _well_val(v):
+    """Best-effort int-cast of a raw `well` cell value; returns None if missing/blank/unparseable."""
     if v is None: return None
     try:
         s=str(v).strip()
@@ -20,12 +33,21 @@ def _well_val(v):
     except (ValueError,TypeError): return None
 
 def _well_for(row, fname_well, f):
+    """Resolve the well for one PairPlex output row: prefer an explicit `well` column
+    value; otherwise fall back to the well number parsed from the output filename
+    (real merged PairPlex output has no `well` column, only a `well<digits>` filename
+    token). Raises `ValueError` if neither is available.
+    """
     w=_well_val(row.get("well"))
     if w is not None: return w
     if fname_well is not None: return fname_well
     raise ValueError(f"cannot derive well for {f}: no usable 'well' value on the row and filename has no 'well<digits>' token")
 
 def _index(comp):
+    """Build a `{(final_well, barcode): {locus: {sequence: {source_pair_id, ...}}}}` lookup
+    from `truth_components`, used by `candidates()` to restrict matching to sources
+    actually observed at a given key.
+    """
     idx={}
     for r in comp.iter_rows(named=True):
         e=idx.setdefault((int(r["final_well"]),r["barcode"]),{}).setdefault(r["locus"],{})
@@ -33,11 +55,18 @@ def _index(comp):
     return idx
 
 def _lights(seq, entry):
+    """Union of `candidates()` matches for `seq` across both light loci (IGK, IGL)."""
     out=set()
     for L in _LIGHT: out|=candidates(seq,L,entry)
     return out
 
 def _classify_origin(valid_assignments, resident):
+    """Classify `origin_status` from a set of valid `(heavy_source, light_source)`
+    assignments against the set of resident source ids at this key: `resident` if every
+    assignment has both sources resident, `ambient` if every assignment has both
+    non-resident, `resident_plus_ambient` if every assignment mixes, `ambiguous` if
+    assignments disagree, `unknown` if there are no assignments.
+    """
     cats=set()
     for h,l in valid_assignments:
         hr,lr=h in resident,l in resident
@@ -45,6 +74,31 @@ def _classify_origin(valid_assignments, resident):
     return cats.pop() if len(cats)==1 else ("ambiguous" if cats else "unknown")
 
 def score(pairplex_output, truth_dir, *, pairplex_metadata=None):
+    """Score one or more PairPlex paired-output parquets against SimPlex truth.
+
+    `pairplex_output` may be a single file, a list of files, or a directory (globbed for
+    `**/*_paired.parquet`); all files are scored jointly against the whole truth in one
+    pass (scoring per-file would wrongly mark every other well's truth keys as `missing`).
+    `truth_dir` must contain `truth_components.parquet` and `truth_barcodes.parquet` (as
+    written by `io.write_truth`). `pairplex_metadata` is accepted but currently unused
+    (reserved for future `no_output_reason` refinement).
+
+    For each returned pair, tries both (chain0, chain1) orientations against truth loci
+    (IGH vs IGK/IGL) — never trusting PairPlex's own chain assignment — and resolves
+    pairing status via `matching.resolve`. If both orientations yield results with the
+    same `valid_assignments`, that shared result is used; if they disagree, the pair is
+    `pairing_status="ambiguous"`/`origin_status="ambiguous"` (genuinely orientation-
+    ambiguous). `origin_status` is derived from whether the resolved source(s) were
+    physically resident at this `(well, barcode)` key. `output_status` is `duplicate` if
+    more than one returned pair maps to the same key, else `unique`.
+
+    Returns `(pair_scores, key_scores)`: `pair_scores` has one row per PairPlex-returned
+    pair (empty-safe: a typed empty frame if no pairs were read); `key_scores` has one row
+    per truth `(well, barcode)` key from `truth_barcodes` — including keys PairPlex
+    returned nothing for (`output_status="missing"`) — carrying `key_status`
+    (singleton/collision/ambient_only), observability flags (`captured_both`,
+    `survived_both`, `sequenced_both`, `reference_pairable_both`), and `output_count`.
+    """
     truth_dir=Path(truth_dir)
     comp=pl.read_parquet(truth_dir/"truth_components.parquet")
     tbar=pl.read_parquet(truth_dir/"truth_barcodes.parquet")

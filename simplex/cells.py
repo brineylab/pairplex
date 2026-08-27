@@ -1,7 +1,23 @@
+"""Stage 1 of the pipeline: load source heavy/light pairs as cells, then assign them to
+overloaded 10X droplets (shared barcodes) and to plate wells.
+
+Sits at the front of the cells -> molecules -> routing -> reads -> truth -> scoring
+pipeline: everything downstream (`molecules.py`, `routing.py`) consumes the `cells`
+frame produced here.
+"""
 import numpy as np, polars as pl
 from ._rng import rng_for
 from .barcodes import load_barcodes
 def load_pairs(input_data, n_cells=None, seed=0):
+    """Load heavy/light source pairs from `input_data` (a paired parquet) into a `cells` frame.
+
+    Validates that `locus:0`/`locus:1` are present (Phase 1-2 requires known loci) and
+    that any repeated `source_pair_id` maps to a consistent sequence+locus (never treat
+    two unrelated records with the same name as equivalent). If `n_cells` is given,
+    subsamples (with replacement if `n_cells` exceeds the input size) using the
+    `"subsample"` RNG stream keyed on `seed`. Returns one row per cell with a fresh
+    `cell_id`, the two chain sequences/loci, and `source_pair_id` provenance.
+    """
     df=pl.read_parquet(input_data)
     req={"sequence_id:0":"chain0_id","sequence:0":"chain0_seq","sequence_id:1":"chain1_id","sequence:1":"chain1_seq"}
     miss=[k for k in req if k not in df.columns]
@@ -20,6 +36,17 @@ def load_pairs(input_data, n_cells=None, seed=0):
     return out.with_row_index("cell_id").select(
         ["cell_id","source_pair_id","chain0_id","chain0_seq","chain0_locus","chain1_id","chain1_seq","chain1_locus"])
 def assign_droplets_and_barcodes(cells, mean, sd, chemistry, barcode_pool_size, seed):
+    """Group cells into overloaded droplets and give each droplet a 10X barcode.
+
+    Cells are shuffled (`"droplets"` RNG stream) and chunked into droplets of size
+    `round(Normal(mean, sd))` clamped to >=1, so droplet size varies but every droplet
+    gets at least one cell; all cells in the same droplet share one `barcode` — this is
+    the overloading mechanism that lets unrelated cells collide on a barcode. Barcodes
+    are drawn from the `chemistry` whitelist (`"barcodes"` RNG stream): one unique
+    barcode per droplet if `barcode_pool_size` is `None`, otherwise sampled with
+    replacement from a pool of that size (enables controlled cross-droplet barcode
+    reuse). Adds `droplet_id` and `barcode` columns to `cells`.
+    """
     rng=rng_for(seed,"droplets"); n=cells.height; order=rng.permutation(n); droplet=np.empty(n,np.int64); i=d=0
     while i<n:
         for _ in range(max(1,int(round(rng.normal(mean,sd))))):
@@ -33,4 +60,10 @@ def assign_droplets_and_barcodes(cells, mean, sd, chemistry, barcode_pool_size, 
         bc=np.array(load_barcodes(chemistry,d,brng))
     return cells.with_columns([pl.Series("droplet_id",droplet),pl.Series("barcode",bc[droplet])])
 def assign_wells(cells,wells,seed):
+    """Assign each whole cell a `resident_well` uniformly at random over `[0, wells)`.
+
+    This models fixed whole cells being distributed into the plate before amplification;
+    resident molecules of a cell later inherit this well as their `amplification_well`.
+    Uses the `"wells"` RNG stream keyed on `seed`.
+    """
     return cells.with_columns(pl.Series("resident_well",rng_for(seed,"wells").integers(0,wells,size=cells.height).astype(np.int64)))

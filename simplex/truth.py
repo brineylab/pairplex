@@ -1,3 +1,12 @@
+"""Ground-truth table construction: the mechanism-faithful truth consumed by `scoring.score`.
+
+Aggregates the `cells`/`chain_status`/`molecules`/`reads` frames produced earlier in the
+cells -> molecules -> routing -> reads -> truth -> scoring pipeline into the three
+ground-truth tables written by `io.write_truth`: `truth_components` (per
+`(final_well, barcode, origin_cell_id, chain)` observed support), `truth_cells` (per-cell
+capture/survival/read summary), and `truth_barcodes` (per `(well, barcode)` occupancy,
+collision, and dominance summary).
+"""
 import polars as pl
 from ._contract import REF_MIN_READS, REF_MIN_UMIS
 
@@ -7,6 +16,11 @@ _COMP_AGG_SCHEMA={"final_well":pl.Int64,"barcode":pl.Utf8,"origin_cell_id":pl.In
     "n_reads_free":pl.Int64,"n_reads_index_hopped":pl.Int64,"n_umis":pl.Int64,"n_source_molecules":pl.Int64}
 
 def _cc_seq(cells):
+    """Reshape `cells` (one row per cell, two chain columns) into long form: one row per
+    `(origin_cell_id, chain)` with that chain's sequence/locus and the cell's home
+    `resident_well`/`barcode`. Used to attach ground-truth sequence/residency onto the
+    read-derived aggregate in `build_truth_components`.
+    """
     parts=[]
     for ch in (0,1):
         parts.append(cells.select([pl.col("cell_id").alias("origin_cell_id"),pl.lit(ch).cast(pl.Int8).alias("chain"),
@@ -15,6 +29,16 @@ def _cc_seq(cells):
     return pl.concat(parts)
 
 def build_truth_components(cells,reads):
+    """Build `truth_components`: one row per `(final_well, barcode, origin_cell_id, chain)`
+    observed in `reads`, with read/UMI/molecule support split by resident/free/index-hopped,
+    joined against the cell's ground-truth sequence/locus.
+
+    `is_resident_source` is True only when both the destination `(final_well, barcode)`
+    equals the cell's home `(resident_well, barcode)` — i.e. this row is genuinely the
+    cell's resident contribution, not an ambient or hopped one that happened to land
+    elsewhere. Empty-safe: if `reads` is empty, aggregates from a typed empty schema
+    (`_COMP_AGG_SCHEMA`) so the result is still a valid (empty) component table.
+    """
     cs=_cc_seq(cells)
     if reads.height==0:
         agg=pl.DataFrame(schema=_COMP_AGG_SCHEMA)
@@ -29,6 +53,14 @@ def build_truth_components(cells,reads):
     return comp.with_columns(((pl.col("resident_well")==pl.col("final_well"))&(pl.col("home_barcode")==pl.col("barcode"))).alias("is_resident_source")).drop(["resident_well","home_barcode"])
 
 def build_truth_cells(cells,chain_status,molecules,reads):
+    """Build `truth_cells`: one row per cell with per-chain capture/survival/read-support
+    columns pivoted wide (suffixed `_0`/`_1`).
+
+    Joins `chain_status` (captured, n_molecules from `molecules.generate_molecules`) with
+    per-chain survival (any surviving molecule) and per-chain read/UMI counts from `reads`
+    (empty-safe: uses a typed empty frame if there are no reads at all), then pivots on
+    `chain` so each cell is one row with both chains' stats side by side.
+    """
     surv=(molecules.filter(pl.col("survived")).group_by(["origin_cell_id","chain"]).len().rename({"origin_cell_id":"cell_id","len":"sn"}))
     if reads.height:
         rc=reads.group_by(["origin_cell_id","chain"]).agg([pl.len().alias("n_reads_generated"),
@@ -43,6 +75,22 @@ def build_truth_cells(cells,chain_status,molecules,reads):
     return cells.join(wide,on="cell_id",how="left")
 
 def build_truth_barcodes(cells,truth_cells,components):
+    """Build `truth_barcodes`: one row per `(well, barcode)` key, the scorer's key-level
+    ground truth.
+
+    The key set is the **union** of physical resident keys `(resident_well, barcode)`
+    from `cells` and observed keys `(final_well, barcode)` from `components` — physical
+    occupancy must come from `cells`, never only from observed components, otherwise a
+    resident cell that produced no read would silently vanish (undercounting collisions,
+    mis-labeling a key `ambient_only`). Computes `n_resident_cells`, `is_collision`
+    (>=2 resident cells), `is_ambient_only` (observed key with 0 resident cells), and
+    per-resident-cell-pair collision counts (`n_captured_both_resident_cells`,
+    `n_survived_both_resident_cells`, `n_sequenced_both_resident_cells`,
+    `n_reference_pairable_resident_cells`, the last using the frozen `REF_MIN_READS`/
+    `REF_MIN_UMIS` thresholds) plus per-locus dominant-source columns (by reads and by
+    UMIs, for heavy and light separately) with tie detection. Support is aggregated by
+    `source_pair_id` first so clonal copies across cells sum before dominance is chosen.
+    """
     physical=cells.select([pl.col("resident_well").alias("well"),pl.col("barcode"),pl.col("cell_id"),pl.col("source_pair_id")])
     occ=physical.group_by(["well","barcode"]).agg([pl.col("source_pair_id").unique().alias("resident_source_ids"),
         pl.col("cell_id").n_unique().alias("n_resident_cells")])

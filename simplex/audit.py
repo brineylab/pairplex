@@ -1,3 +1,11 @@
+"""Phase 0A real-data audit: dataset-agnostic marginal summary of real PairPlex metadata.
+
+Standalone from the generator/scorer pipeline (cells -> molecules -> routing -> reads ->
+truth -> scoring) — this module never touches synthetic truth. It exists only to bracket
+plausible SimPlex knob ranges from a real PairPlex run's metadata, and explicitly cannot
+confirm or refute any specific mispairing hypothesis (see `NO_LABELED_TRUTH_CAVEAT`),
+since the real metadata carries no labeled ground truth for which pairs are correct.
+"""
 import re, glob as _glob
 from pathlib import Path
 import polars as pl
@@ -17,14 +25,17 @@ NO_LABELED_TRUTH_CAVEAT = (
 )
 
 def _bc_from_name(name):
+    """Extract the barcode token before `_contig` from a contig `name`; None if `name` is None."""
     return re.split(r"_contig", str(name))[0] if name is not None else None
 
 def _well_from_text(text):
+    """Best-effort well number parsed from a `well<digits>`-style token in `text`."""
     if text is None: return None
     m = re.search(r"well0*(\d+)", str(text), re.IGNORECASE)
     return int(m.group(1)) if m else None
 
 def _locus_from_name(name):
+    """Best-effort locus (IGH/IGK/IGL) guessed from substring match in a contig `name`."""
     if name is None: return None
     s = str(name).upper()
     for loc in (_HEAVY,) + _LIGHT:
@@ -32,11 +43,13 @@ def _locus_from_name(name):
     return None
 
 def _pick(df, *names):
+    """Return the first column name in `names` present in `df`, else None."""
     for n in names:
         if n in df.columns: return n
     return None
 
 def _to_int_or_none(v):
+    """Best-effort int-cast of a raw cell value; returns None on blank/null/unparseable input."""
     if v is None: return None
     try:
         s = str(v).strip()
@@ -93,6 +106,10 @@ def normalize_metadata(raw):
     }).select(_REQUIRED)
 
 def _load(normalized_glob_or_df):
+    """Load normalized metadata rows from a DataFrame, a glob pattern, a directory of
+    parquet files, or a single file path; concatenates diagonally (schemas may vary
+    across files). Returns a typed empty frame if no files match.
+    """
     if isinstance(normalized_glob_or_df, pl.DataFrame):
         return normalized_glob_or_df
     pattern = str(normalized_glob_or_df)
@@ -108,6 +125,10 @@ def _load(normalized_glob_or_df):
     return pl.concat(frames, how="diagonal_relaxed")
 
 def _quantile_rows(df, col):
+    """Compute count/mean/quantile (p05,p25,p50,p75,p95) summary rows for column `col`
+    of `df`, dropping nulls first. Returns null-valued rows (with `n=0`) if the column
+    has no non-null values.
+    """
     s = df[col].drop_nulls().cast(pl.Float64, strict=False)
     n = s.len()
     rows = [{"section": col, "stat": "n", "value": None, "n": n}]
@@ -120,12 +141,17 @@ def _quantile_rows(df, col):
     return rows
 
 def _profile_category(n_h, n_l):
+    """Classify a `(well, barcode)` key's passing-contig counts into a fixed profile bucket."""
     if n_h == 1 and n_l == 1: return "1H+1L"
     if n_h == 1 and n_l == 2: return "1H+2L"
     if n_h == 2 and n_l == 1: return "2H+1L"
     return "other"
 
 def _contig_profile(df):
+    """Count `(well, barcode)` keys by heavy/light contig-count profile among
+    `pass_filters==True` contigs. Returns `(category_counts_dict, n_keys)`; all-zero
+    counts and `n_keys=0` if there are no passing contigs or required columns are absent.
+    """
     cats = {"1H+1L": 0, "1H+2L": 0, "2H+1L": 0, "other": 0}
     if df.height == 0 or "pass_filters" not in df.columns or "locus" not in df.columns:
         return cats, 0

@@ -1,3 +1,9 @@
+"""Top-level pipeline orchestrator: `simplex.run(...)`.
+
+Wires together every stage of the cells -> molecules -> routing -> reads -> truth ->
+scoring pipeline (all other modules in this package) into one call that generates a
+synthetic dataset, its ground truth, and a run manifest.
+"""
 import sys, hashlib, json
 from pathlib import Path
 import numpy, polars
@@ -14,6 +20,20 @@ try: import pairplex; _PPV=getattr(pairplex,"__version__","unknown")
 except Exception: _PPV="unknown"
 
 def run(input_data, output_directory, **knobs):
+    """Generate one synthetic SimPlex dataset + ground truth under `output_directory`.
+
+    Builds a `SimplexConfig` from `input_data`/`output_directory`/`**knobs`, refuses to
+    run into a non-empty `output_directory` (stale FASTQs must not contaminate a new
+    experiment), then runs every pipeline stage in order: load & subsample cells ->
+    assign droplets/barcodes -> assign wells -> validate the config against the actual
+    cell count (the OOM guard needs the real `n_cells` when it was `None`) -> generate
+    molecules -> route/amplify into reads -> apply sequencing error -> build truth
+    tables -> build merged FASTQ records. Writes the merged per-well FASTQ files and
+    truth parquets, plus `simplex_config.json` and `run_manifest.json` (versions, seed,
+    input fingerprint, config hash, row counts) for provenance.
+
+    Returns the path to the `reads/` directory containing the written FASTQ files.
+    """
     cfg=SimplexConfig(input_data=str(input_data), output_directory=str(output_directory), **knobs)
     out=Path(output_directory)
     if out.exists() and any(out.iterdir()):
