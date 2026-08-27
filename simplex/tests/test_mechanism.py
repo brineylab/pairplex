@@ -59,24 +59,28 @@ def test_exact_ambient_mispair(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 2. one-cell negative control: ambient (free) molecule keeps its own barcode, so an
-#    ambient light of source B never meets resident heavy A -> no mispair.
+# 2. one-cell negative control: a SINGLE source cell A contributes both its heavy and
+#    its light to one (well,barcode) key -- heavy A resident @ (well0,bcA) plus A's OWN
+#    free light molecule routed back to the same (well0,bcA). PairPlex REALLY emits a
+#    coherent same-source pair (non-vacuous), and it must NOT be classified mispaired.
 # ---------------------------------------------------------------------------
 def test_negative_control(tmp_path):
-    bcs = load_barcodes("v2", 2, rng_for(2, "fx"))
-    cells = pl.DataFrame({"cell_id":[0,1],"source_pair_id":["A","B"],
-        "chain0_id":["hA","hB"],"chain0_seq":[HEAVY_A,HEAVY_B],"chain0_locus":["IGH","IGH"],
-        "chain1_id":["lA","lB"],"chain1_seq":[LIGHT_A,LIGHT_B],"chain1_locus":["IGK","IGK"],
-        "droplet_id":[0,1],"barcode":bcs,"resident_well":[0,1]})
-    chain_status = pl.DataFrame({"cell_id":[0,0,1,1],"chain":[0,1,0,1],
-        "captured":[True,False,False,True],"n_molecules":[1,0,0,1]})   # A heavy captured (light dropped); B light captured
-    molecules = pl.DataFrame({"molecule_id":[0,1],"origin_cell_id":[0,1],"chain":[0,1],"survived":[True,True]})
-    reads = pl.concat([family(0,0,"A",0,"IGH",HEAVY_A,0,bcs[0],"AAAAAAAAAA",False),   # A heavy resident @ well0 / bc0
-                       family(1,1,"B",1,"IGK",LIGHT_B,0,bcs[1],"CCCCCCCCCC",True)])    # B light FREE -> well0, keeps bc1
+    bcA = load_barcodes("v2", 1, rng_for(2, "fx"))[0]
+    cells = pl.DataFrame({"cell_id":[0],"source_pair_id":["A"],
+        "chain0_id":["hA"],"chain0_seq":[HEAVY_A],"chain0_locus":["IGH"],
+        "chain1_id":["lA"],"chain1_seq":[LIGHT_A],"chain1_locus":["IGK"],
+        "droplet_id":[0],"barcode":[bcA],"resident_well":[0]})
+    chain_status = pl.DataFrame({"cell_id":[0,0],"chain":[0,1],
+        "captured":[True,True],"n_molecules":[1,1]})   # A: both heavy and light captured
+    molecules = pl.DataFrame({"molecule_id":[0,1],"origin_cell_id":[0,0],"chain":[0,1],"survived":[True,True]})
+    reads = pl.concat([family(0,0,"A",0,"IGH",HEAVY_A,0,bcA,"AAAAAAAAAA",False),   # A heavy resident @ well0 / bcA
+                       family(1,0,"A",1,"IGK",LIGHT_A,0,bcA,"AACCAACCAA",True)])    # A OWN light FREE -> back to well0 / bcA
     rd = emit(cells,chain_status,molecules,reads,tmp_path/"sim")
     ppo = tmp_path/"pp"; _run(rd,ppo)
     ps,_ = score(ppo,(tmp_path/"sim"/"truth"))
-    assert (ps["pairing_status"]=="mispaired").sum() == 0
+    assert ps.height >= 1                                             # non-vacuous: a real pair was emitted
+    assert (ps["pairing_status"]=="mispaired").sum() == 0            # ...and the same-source pair is NOT mispaired
+    assert (ps["origin_status"].is_in(["resident","ambient"])).all() # coherent origin, not a cross-source mispair
 
 
 # ---------------------------------------------------------------------------
