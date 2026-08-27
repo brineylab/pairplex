@@ -77,6 +77,14 @@ pairplex.run(
 
 <br>
 
+## Choosing thresholds with SimPlex
+
+PairPlex's pairing quality depends on filter thresholds (`min_cluster_reads`, `min_cluster_umis`, `min_cluster_fraction`, `clustering_threshold`). To choose them on evidence rather than by guessing, this repo ships **[SimPlex](./simplex/README.md)** (`import simplex`) — a companion tool that generates **mechanism-faithful synthetic sequencing data with known ground truth**, runs it through PairPlex, and **scores** the result (correct vs mispaired pairs, recall, yield loss). Sweep thresholds against SimPlex to read off the precision/yield trade-off before committing to a production configuration.
+
+See **[`simplex/README.md`](./simplex/README.md)** for what it simulates, the available knobs and their expected effects, and how to interpret the scored results.
+
+<br>
+
 ## Citation
 If you are using Pairplex or the dataset generated of paired antibody sequences, please cite:
 
