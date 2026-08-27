@@ -11,6 +11,20 @@ def _files(x):
 
 def _bc(sid): return re.split(r"_contig",sid)[0] if sid else sid
 
+def _well_val(v):
+    if v is None: return None
+    try:
+        s=str(v).strip()
+        if s=="" or s.lower()=="null": return None
+        return int(float(s))
+    except (ValueError,TypeError): return None
+
+def _well_for(row, fname_well, f):
+    w=_well_val(row.get("well"))
+    if w is not None: return w
+    if fname_well is not None: return fname_well
+    raise ValueError(f"cannot derive well for {f}: no usable 'well' value on the row and filename has no 'well<digits>' token")
+
 def _index(comp):
     idx={}
     for r in comp.iter_rows(named=True):
@@ -44,8 +58,9 @@ def score(pairplex_output, truth_dir, *, pairplex_metadata=None):
     rows,seen=[],{}
     for f in files:
         df=pl.read_parquet(f)
+        m=re.search(r"well(\d+)",Path(f).name); fname_well=int(m.group(1)) if m else None
         for r in df.to_dicts():
-            well=int(r["well"]); bc=_bc(r.get("sequence_id:0") or r.get("name","")); key=(well,bc); entry=idx.get(key)
+            well=_well_for(r,fname_well,f); bc=_bc(r.get("sequence_id:0") or r.get("name","")); key=(well,bc); entry=idx.get(key)
             s0,s1=r.get("sequence:0"),r.get("sequence:1")
             res_here=resident_at.get(key,set())
             # try BOTH orientations against TRUTH loci (never trust PairPlex's annotation)
