@@ -19,3 +19,18 @@ def load_pairs(input_data, n_cells=None, seed=0):
         idx=rng_for(seed,"subsample").choice(out.height,size=n_cells,replace=n_cells>out.height); out=out[idx]
     return out.with_row_index("cell_id").select(
         ["cell_id","source_pair_id","chain0_id","chain0_seq","chain0_locus","chain1_id","chain1_seq","chain1_locus"])
+def assign_droplets_and_barcodes(cells, mean, sd, chemistry, barcode_pool_size, seed):
+    rng=rng_for(seed,"droplets"); n=cells.height; order=rng.permutation(n); droplet=np.empty(n,np.int64); i=d=0
+    while i<n:
+        for _ in range(max(1,int(round(rng.normal(mean,sd))))):
+            if i>=n: break
+            droplet[order[i]]=d; i+=1
+        d+=1
+    brng=rng_for(seed,"barcodes")
+    if barcode_pool_size:
+        pool=np.array(load_barcodes(chemistry,min(barcode_pool_size,d),brng)); bc=pool[brng.integers(0,len(pool),size=d)]
+    else:
+        bc=np.array(load_barcodes(chemistry,d,brng))
+    return cells.with_columns([pl.Series("droplet_id",droplet),pl.Series("barcode",bc[droplet])])
+def assign_wells(cells,wells,seed):
+    return cells.with_columns(pl.Series("resident_well",rng_for(seed,"wells").integers(0,wells,size=cells.height).astype(np.int64)))
