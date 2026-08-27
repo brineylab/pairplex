@@ -84,7 +84,8 @@ def run(
 
     min_cluster_umis : int
         The minimum number of UMIs to consider a cluster for consensus sequence generation. Clusters containing fewer
-        UMIs are discarded.
+        UMIs are discarded. Defaults to ``1``. For datasets with heavy ambient contamination, a value of ``2`` is
+        recommended.
 
     min_cluster_fraction : float
         The minimum fraction of reads to consider a cluster for consensus sequence generation. Clusters containing fewer
