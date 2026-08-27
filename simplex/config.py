@@ -15,10 +15,18 @@ class SimplexConfig:
     """All knobs for one SimPlex generator run, grouped by what they control:
 
     - **Sampling**: `n_cells` (subsample this many source pairs; `None` = use all).
-    - **Overloading** (cells sharing a 10X droplet barcode): `cells_per_droplet_mean/sd`
-      (Normal, clamped >=1) and `barcode_pool_size` (`None` = one unique barcode per
-      droplet; an int samples droplet barcodes from a smaller pool, enabling controlled
-      barcode reuse/collision across droplets).
+    - **Overloading** (cells sharing a 10X droplet barcode): `cells_per_droplet_mean` is the
+      physical loading rate lambda (cells per GEM); cells are randomly loaded into
+      `round(n_cells / lambda)` droplets, giving **Poisson** occupancy (the encapsulation
+      process). `cells_per_droplet_overdispersion` (>= 0, default 0 = pure Poisson) makes
+      droplet capture propensities vary (Dirichlet weights, concentration `1/overdispersion`)
+      to model cell clumping / uneven GEMs (Negative-Binomial-like occupancy). `barcode_pool_size`
+      (`None` = one unique barcode per droplet; an int samples droplet barcodes from a smaller
+      pool, enabling controlled barcode reuse/collision across droplets).
+
+    **Defaults are an illustrative baseline, not a claim about any assay** — calibrate the
+    uncertain ones (especially `release_rate`, `molecules_per_chain_mean`, `recovery_rate`,
+    `cells_per_droplet_mean`) to your real `metadata/*.csv` and **sweep ranges**.
     - **Capture & depth**: `recovery_rate` (per-cell, per-chain capture probability),
       `molecules_per_chain_mean` (RT molecule count per captured chain),
       `molecule_survival_rate` (Bernoulli survival applied *before* amplification —
@@ -41,9 +49,9 @@ class SimplexConfig:
     """
     input_data: str; output_directory: str
     n_cells: int | None = None; wells: int = 96
-    cells_per_droplet_mean: float = 5.0; cells_per_droplet_sd: float = 2.0
+    cells_per_droplet_mean: float = 2.0; cells_per_droplet_overdispersion: float = 0.0  # lambda + optional clumping
     barcode_pool_size: int | None = None
-    recovery_rate: float = 0.5; molecules_per_chain_mean: float = 10.0
+    recovery_rate: float = 0.5; molecules_per_chain_mean: float = 20.0
     release_rate: float = 0.02; molecule_survival_rate: float = 0.8; reads_per_molecule_mean: float = 5.0
     rt_sub_rate: float = 0.0; rt_indel_rate: float = 0.0
     sequencing_sub_rate: float = 0.001; sequencing_indel_rate: float = 0.0
@@ -72,7 +80,7 @@ class SimplexConfig:
         """Enforce config invariants; raises `ValueError` on the first violation, else returns `self`.
 
         Checks: all rate-like fields in [0,1]; all positive-only fields > 0;
-        `cells_per_droplet_sd` >= 0; `barcode_pool_size`/`n_cells` positive or `None`;
+        `cells_per_droplet_overdispersion` >= 0; `barcode_pool_size`/`n_cells` positive or `None`;
         `output_mode` is `"merged"` (Phase 1-2 only supports merged output);
         `barcode_length`/`umi_length`/`tso` match the fixed values `pairplex.parse_barcodes`
         assumes; `index_hop_rate` must be 0 when `wells==1` (a hop can't change well);
@@ -84,7 +92,7 @@ class SimplexConfig:
             if not (0.0<=v<=1.0): raise ValueError(f"{r}={v} not in [0,1]")
         for r in self._POS:
             if getattr(self,r)<=0: raise ValueError(f"{r} must be > 0")
-        if self.cells_per_droplet_sd<0: raise ValueError("cells_per_droplet_sd must be >= 0")
+        if self.cells_per_droplet_overdispersion<0: raise ValueError("cells_per_droplet_overdispersion must be >= 0")
         if self.barcode_pool_size is not None and self.barcode_pool_size<=0: raise ValueError("barcode_pool_size must be > 0 or None")
         if self.n_cells is not None and self.n_cells<=0: raise ValueError("n_cells must be > 0 or None")
         if self.output_mode!="merged": raise ValueError("Phase 1-2: output_mode='merged' only")

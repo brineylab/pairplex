@@ -49,8 +49,9 @@ def report_metrics(ppo, truth):
 def test_ambient_extra_contig_regime(tmp_path):
     # ambient adds a low-support extra chain: a fraction filter should reduce mispairs AND may raise recall
     inp = many_pairs_parquet(tmp_path, 60); out = tmp_path / "sim"
-    rd = run(input_data=inp, output_directory=out, wells=2, cells_per_droplet_mean=2, cells_per_droplet_sd=0,
+    rd = run(input_data=inp, output_directory=out, wells=2, cells_per_droplet_mean=2, cells_per_droplet_overdispersion=0,
              recovery_rate=0.9, release_rate=0.2, molecule_survival_rate=1.0, index_hop_rate=0.0,
+             molecules_per_chain_mean=10.0, reads_per_molecule_mean=5.0,
              sequencing_sub_rate=0.0, variable_length=False, seed=1)
     lo = tmp_path / "lo"; pairplex.run(sequences=str(rd), output_directory=str(lo), min_cluster_reads=3, min_cluster_umis=1, min_cluster_fraction=0.0, quiet=True)
     hi = tmp_path / "hi"; pairplex.run(sequences=str(rd), output_directory=str(hi), min_cluster_reads=3, min_cluster_umis=1, min_cluster_fraction=0.3, quiet=True)
@@ -65,7 +66,7 @@ def test_weak_real_chain_regime(tmp_path):
     # drops out of the paired output -> recall falls. This is the precision/yield tradeoff seen from
     # the yield side: filtering that is safe against ambient becomes costly against weak real signal.
     inp = many_pairs_parquet(tmp_path, 60); out = tmp_path / "sim"
-    rd = run(input_data=inp, output_directory=out, wells=2, cells_per_droplet_mean=1, cells_per_droplet_sd=0,
+    rd = run(input_data=inp, output_directory=out, wells=2, cells_per_droplet_mean=1, cells_per_droplet_overdispersion=0,
              recovery_rate=0.9, release_rate=0.02, molecule_survival_rate=1.0, index_hop_rate=0.0,
              reads_per_molecule_mean=3.0, molecules_per_chain_mean=3.0,
              sequencing_sub_rate=0.0, variable_length=False, seed=2)
@@ -80,7 +81,7 @@ def test_broad_sweep_report(tmp_path):
     # Report-only harness: run a small grid and just record precision / mispair rate / recall / yield.
     # No universal-direction assertion -- only that every metric computes without error across the grid.
     inp = many_pairs_parquet(tmp_path, 60); out = tmp_path / "sim"
-    rd = run(input_data=inp, output_directory=out, wells=2, cells_per_droplet_mean=2, cells_per_droplet_sd=0,
+    rd = run(input_data=inp, output_directory=out, wells=2, cells_per_droplet_mean=2, cells_per_droplet_overdispersion=0,
              recovery_rate=0.9, release_rate=0.1, molecule_survival_rate=1.0, index_hop_rate=0.0,
              reads_per_molecule_mean=5.0, molecules_per_chain_mean=5.0,
              sequencing_sub_rate=0.0, variable_length=False, seed=3)

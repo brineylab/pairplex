@@ -35,29 +35,39 @@ def load_pairs(input_data, n_cells=None, seed=0):
         idx=rng_for(seed,"subsample").choice(out.height,size=n_cells,replace=n_cells>out.height); out=out[idx]
     return out.with_row_index("cell_id").select(
         ["cell_id","source_pair_id","chain0_id","chain0_seq","chain0_locus","chain1_id","chain1_seq","chain1_locus"])
-def assign_droplets_and_barcodes(cells, mean, sd, chemistry, barcode_pool_size, seed):
-    """Group cells into overloaded droplets and give each droplet a 10X barcode.
+def assign_droplets_and_barcodes(cells, mean, overdispersion, chemistry, barcode_pool_size, seed):
+    """Group cells into overloaded droplets (GEMs) and give each droplet a 10X barcode.
 
-    Cells are shuffled (`"droplets"` RNG stream) and chunked into droplets of size
-    `round(Normal(mean, sd))` clamped to >=1, so droplet size varies but every droplet
-    gets at least one cell; all cells in the same droplet share one `barcode` — this is
-    the overloading mechanism that lets unrelated cells collide on a barcode. Barcodes
-    are drawn from the `chemistry` whitelist (`"barcodes"` RNG stream): one unique
-    barcode per droplet if `barcode_pool_size` is `None`, otherwise sampled with
-    replacement from a pool of that size (enables controlled cross-droplet barcode
-    reuse). Adds `droplet_id` and `barcode` columns to `cells`.
+    Occupancy model (physically grounded): `mean` is the loading rate lambda = cells per
+    GEM. Cells are randomly loaded into ``K = round(n_cells / mean)`` droplets, so droplet
+    occupancy follows a **Poisson(lambda)** distribution — the random-encapsulation process,
+    with a single interpretable knob and no clamp/round distortion. ``overdispersion`` (>= 0,
+    default 0 = pure Poisson) makes per-droplet capture propensities vary via Dirichlet
+    weights with concentration ``1/overdispersion`` (smaller alpha => more clumping),
+    producing Negative-Binomial-like over-dispersed occupancy to model cell clumping /
+    uneven GEMs. All cells in the same droplet share one `barcode` — the overloading
+    mechanism that lets unrelated cells collide on a barcode.
+
+    Barcodes come from the `chemistry` whitelist (`"barcodes"` RNG stream): one unique
+    barcode per droplet if `barcode_pool_size` is `None`, otherwise sampled with replacement
+    from a pool of that size (controlled cross-droplet reuse). Empty droplets (a natural
+    Poisson consequence) simply own no cells. Adds `droplet_id` and `barcode` to `cells`.
+    Uses the `"droplets"` RNG stream keyed on `seed`.
     """
-    rng=rng_for(seed,"droplets"); n=cells.height; order=rng.permutation(n); droplet=np.empty(n,np.int64); i=d=0
-    while i<n:
-        for _ in range(max(1,int(round(rng.normal(mean,sd))))):
-            if i>=n: break
-            droplet[order[i]]=d; i+=1
-        d+=1
+    rng=rng_for(seed,"droplets"); n=cells.height
+    K=max(1,int(round(n/mean)))
+    if overdispersion and overdispersion>0:
+        # Dirichlet capture propensities over droplets -> over-dispersed (NB-like) occupancy
+        p=rng.dirichlet(np.full(K,1.0/overdispersion))
+        droplet=rng.choice(K,size=n,p=p).astype(np.int64)
+    else:
+        # uniform random loading -> Poisson(lambda) occupancy
+        droplet=rng.integers(0,K,size=n).astype(np.int64)
     brng=rng_for(seed,"barcodes")
     if barcode_pool_size:
-        pool=np.array(load_barcodes(chemistry,min(barcode_pool_size,d),brng)); bc=pool[brng.integers(0,len(pool),size=d)]
+        pool=np.array(load_barcodes(chemistry,min(barcode_pool_size,K),brng)); bc=pool[brng.integers(0,len(pool),size=K)]
     else:
-        bc=np.array(load_barcodes(chemistry,d,brng))
+        bc=np.array(load_barcodes(chemistry,K,brng))
     return cells.with_columns([pl.Series("droplet_id",droplet),pl.Series("barcode",bc[droplet])])
 def assign_wells(cells,wells,seed):
     """Assign each whole cell a `resident_well` uniformly at random over `[0, wells)`.

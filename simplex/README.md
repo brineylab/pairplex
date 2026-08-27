@@ -129,7 +129,7 @@ reads_dir = simplex.run(
     input_data="./real_pairs.parquet",   # needs sequence_id:0/sequence:0/sequence_id:1/sequence:1 + locus:0/1
     output_directory="./sim_out",
     wells=96,
-    cells_per_droplet_mean=5, cells_per_droplet_sd=2,
+    cells_per_droplet_mean=2,              # loading rate lambda (cells per GEM)
     recovery_rate=0.5,
     release_rate=0.02,                    # ambient
     index_hop_rate=0.001,
@@ -154,6 +154,11 @@ simplex.run(input_data, output_directory, **knobs) -> Path   # returns the reads
 Knobs, grouped by what they model. The **Effect** column is the *direction* a change pushes
 results when you then run PairPlex and score (all else equal).
 
+> ⚠️ **Defaults are an illustrative baseline, not a claim about any assay.** Calibrate the
+> uncertain, high-leverage ones — especially `release_rate` (ambient), `cells_per_droplet_mean`
+> (λ), `molecules_per_chain_mean`, and `recovery_rate` — to your real `metadata/*.csv`, and
+> **sweep ranges** rather than trusting a single point.
+
 ### Sampling
 | Knob | Default | Meaning | Effect |
 |---|---|---|---|
@@ -164,15 +169,15 @@ results when you then run PairPlex and score (all else equal).
 | Knob | Default | Meaning | Effect |
 |---|---|---|---|
 | `wells` | `96` | Number of wells cells are distributed into. | More wells → fewer within-well barcode collisions. |
-| `cells_per_droplet_mean` | `5` | Mean cells per overloaded droplet (all share one barcode). | Higher → more cells share a barcode → more collision risk. |
-| `cells_per_droplet_sd` | `2` | SD of cells per droplet. | Spread of droplet occupancy. |
+| `cells_per_droplet_mean` | `2` | **Loading rate λ = cells per GEM.** Cells are randomly loaded into `round(n_cells/λ)` droplets → **Poisson** occupancy. All cells in a droplet share one barcode. | Higher λ → more cells share a barcode → more collision risk. Realistic λ ≈ cells-loaded ÷ GEM-barcodes (often ~1–3). |
+| `cells_per_droplet_overdispersion` | `0.0` | `0` = pure Poisson; `>0` makes droplet capture propensities vary (Dirichlet, concentration `1/overdispersion`) → Negative-Binomial-like clumping. | Higher → more uneven occupancy (cell clumping / GEM heterogeneity). |
 | `barcode_pool_size` | `None` | `None` = unique barcode per droplet; `int` = sample droplet barcodes from a pool of this size (forces reuse). | A stress knob for barcode-collision robustness. |
 
 ### Capture & depth (how much signal each cell produces)
 | Knob | Default | Meaning | Effect |
 |---|---|---|---|
 | `recovery_rate` | `0.5` | Per-chain capture probability. | Lower → more chain **dropout** → more unpaired cells and more mispair opportunity. |
-| `molecules_per_chain_mean` | `10` | Mean distinct molecules (UMIs) per captured chain. | Higher → more UMI diversity / support. |
+| `molecules_per_chain_mean` | `20` | Mean distinct molecules (UMIs) per captured chain. | Higher → more UMI diversity / support. |
 | `molecule_survival_rate` | `0.8` | Fraction of molecules surviving **before** amplification. | Lower → less support, more effective dropout. |
 | `reads_per_molecule_mean` | `5` | Amplification depth per surviving molecule. | Higher → more reads per contig. |
 
@@ -268,7 +273,7 @@ import simplex, pairplex
 # 1) generate synthetic reads with known truth
 reads_dir = simplex.run(
     input_data="./real_pairs.parquet", output_directory="./sim",
-    wells=8, cells_per_droplet_mean=2, cells_per_droplet_sd=0,
+    wells=8, cells_per_droplet_mean=2,
     recovery_rate=0.6, release_rate=0.15, index_hop_rate=0.001,
     seed=1,
 )

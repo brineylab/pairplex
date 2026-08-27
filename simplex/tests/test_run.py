@@ -8,7 +8,7 @@ def _inp(tmp,n=60):
        "name":[f"c{i}" for i in range(n)],"locus:0":["IGH"]*n,"locus:1":["IGK"]*n}
     p=tmp/"in.parquet"; pl.DataFrame(d).write_parquet(p); return p
 def test_outputs_and_manifest(tmp_path):
-    out=tmp_path/"o"; run(input_data=_inp(tmp_path),output_directory=out,wells=4,cells_per_droplet_mean=1,cells_per_droplet_sd=0,variable_length=False,seed=0)
+    out=tmp_path/"o"; run(input_data=_inp(tmp_path),output_directory=out,wells=4,cells_per_droplet_mean=1,cells_per_droplet_overdispersion=0,variable_length=False,seed=0)
     assert list((out/"reads").glob("*.fastq.gz"))
     for f in ["truth_components","truth_cells","truth_barcodes"]: assert (out/"truth"/f"{f}.parquet").exists()
     man=json.loads((out/"run_manifest.json").read_text())
