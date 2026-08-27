@@ -5,23 +5,27 @@ tables) have produced their in-memory frames.
 """
 import gzip
 from pathlib import Path
+from ._log import logger, pbar
 def _tag(w): return f"well{int(w):03d}"
-def write_merged_fastq(built, output_dir, compress=True):   # in-memory per-well writer (v1 scale)
+def write_merged_fastq(built, output_dir, compress=True, show_progress=False):   # in-memory per-well writer (v1 scale)
     """Write `built` (the `build_merged` output: read_id/final_well/read_seq/qual) as one
     FASTQ(.gz) file per `final_well` under `output_dir/reads/well<NNN>.fastq[.gz]`.
 
-    In-memory per-well writer sized for v1 scale (not streaming). Returns the list of
-    written paths (empty list if `built` is empty).
+    In-memory per-well writer sized for v1 scale (not streaming). Shows a per-well `tqdm`
+    progress bar when `show_progress` is True. Returns the list of written paths (empty list
+    if `built` is empty).
     """
     rd=Path(output_dir)/"reads"; rd.mkdir(parents=True,exist_ok=True)
     ext="fastq.gz" if compress else "fastq"; op=(lambda p: gzip.open(p,"wt")) if compress else (lambda p: open(p,"w"))
     paths=[]
     if built.height==0: return paths
-    for (well,),sub in built.group_by(["final_well"], maintain_order=True):
+    groups=list(built.group_by(["final_well"], maintain_order=True))
+    for (well,),sub in pbar(groups, desc="write fastq", quiet=not show_progress):
         p=rd/f"{_tag(well)}.{ext}"
         with op(p) as fh:
             fh.write("".join(f"@{i}\n{s}\n+\n{q}\n" for i,s,q in zip(sub["read_id"],sub["read_seq"],sub["qual"])))
         paths.append(p)
+        logger.debug("wrote %s (%d reads)", p.name, sub.height)
     return paths
 def write_truth(output_dir, comp, cells, barcodes, reads=None):
     """Write the ground-truth tables under `output_dir/truth/`: `truth_components.parquet`,

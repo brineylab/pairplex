@@ -28,3 +28,19 @@ def test_zero_recovery_run(tmp_path):  # full-pipeline zero-read case must not r
 def test_zero_survival_run(tmp_path):
     out=tmp_path/"z2"; run(input_data=_inp(tmp_path),output_directory=out,wells=4,molecule_survival_rate=0.0,seed=0)
     assert (out/"truth"/"truth_barcodes.parquet").exists()
+def test_verbose_logs_and_quiet_silences(tmp_path):
+    import logging
+    logger=logging.getLogger("simplex"); rec=[]
+    class Cap(logging.Handler):
+        def emit(self, r): rec.append(r)
+    h=Cap(); logger.addHandler(h)
+    try:
+        inp=_inp(tmp_path)
+        run(input_data=inp,output_directory=tmp_path/"v",wells=4,cells_per_droplet_mean=1,variable_length=False,seed=0,verbose=True)
+        assert any(r.levelno==logging.INFO for r in rec)                 # stage logs emitted
+        assert any("loaded" in r.getMessage() for r in rec)             # informative content
+        rec.clear()
+        run(input_data=inp,output_directory=tmp_path/"q",wells=4,cells_per_droplet_mean=1,variable_length=False,seed=0,quiet=True)
+        assert not any(r.levelno==logging.INFO for r in rec)            # quiet -> no INFO
+    finally:
+        logger.removeHandler(h)

@@ -15,6 +15,7 @@ from .routing import route_and_amplify
 from .reads import apply_sequencing_errors, build_merged
 from .truth import build_truth_components, build_truth_cells, build_truth_barcodes
 from .io import write_merged_fastq, write_truth
+from ._log import configure_logging, logger, pbar
 try: from .version import __version__ as _SV
 except Exception: _SV="0.0.0"
 try: import pairplex; _PPV=getattr(pairplex,"__version__","unknown")
@@ -47,6 +48,8 @@ def run(
     variable_length: bool = True,
     write_read_truth: bool = False,
     seed: int = 0,
+    quiet: bool = False,
+    verbose: bool = False,
 ) -> "Path":
     """
     Generate one synthetic SimPlex dataset with mechanism-faithful ground truth.
@@ -129,6 +132,10 @@ def run(
     seed : int, default 0
         Root seed; all per-stage RNG derives from it. Same seed + same input + same layout
         reproduces identical output.
+    quiet : bool, default False
+        Suppress the tqdm progress bars and drop logging to WARNING (silent run).
+    verbose : bool, default False
+        Enable DEBUG-level logging (per-stage detail, full config). Ignored if ``quiet``.
 
     Returns
     -------
@@ -140,26 +147,44 @@ def run(
     simplex.score : score a PairPlex run against the truth produced here.
     simplex.config.SimplexConfig : the same knobs as a validated dataclass.
     """
+    # quiet/verbose are run-behaviour, not part of the reproducible data-gen config
     kw = dict(locals())
+    for k in ("quiet", "verbose"):
+        kw.pop(k, None)
     kw["input_data"] = str(input_data)
     kw["output_directory"] = str(output_directory)
     cfg = SimplexConfig(**kw)
+    configure_logging(quiet=quiet, verbose=verbose)
     out=Path(output_directory)
     if out.exists() and any(out.iterdir()):
         raise FileExistsError(f"output dir {out} not empty; refusing to overwrite an experiment")
     out.mkdir(parents=True, exist_ok=True)
+    logger.info("run starting: input=%s wells=%d seed=%d", cfg.input_data, cfg.wells, cfg.seed)
+    logger.debug("config: %s", cfg.to_dict())
+    bar = pbar(total=9, desc="simplex", quiet=quiet)
+
     cells=load_pairs(cfg.input_data, cfg.n_cells, cfg.seed); cfg.validate(actual_n_cells=cells.height)
+    logger.info("[1/9] loaded %d cells", cells.height); bar.update(1)
     cells=assign_droplets_and_barcodes(cells, cfg.cells_per_droplet_mean, cfg.cells_per_droplet_overdispersion, cfg.chemistry, cfg.barcode_pool_size, cfg.seed)
+    logger.info("[2/9] assigned %d droplets/barcodes (lambda=%.2f)", cells["droplet_id"].n_unique(), cfg.cells_per_droplet_mean); bar.update(1)
     cells=assign_wells(cells, cfg.wells, cfg.seed)
+    logger.info("[3/9] assigned cells to %d wells", cfg.wells); bar.update(1)
     mols, chain_status=generate_molecules(cells, cfg.recovery_rate, cfg.molecules_per_chain_mean, cfg.release_rate, cfg.umi_length, cfg.rt_sub_rate, cfg.rt_indel_rate, cfg.seed)
+    logger.info("[4/9] generated %d molecules (%d free)", mols.height, int(mols["is_free"].sum()) if mols.height else 0); bar.update(1)
     mols, reads=route_and_amplify(mols, cfg.wells, cfg.molecule_survival_rate, cfg.reads_per_molecule_mean, cfg.index_hop_rate, cfg.seed)
+    logger.info("[5/9] amplified to %d reads (%d molecules survived)", reads.height, int(mols["survived"].sum()) if mols.height else 0); bar.update(1)
     reads=apply_sequencing_errors(reads, cfg.sequencing_sub_rate, cfg.sequencing_indel_rate, cfg.seed)
+    logger.info("[6/9] applied sequencing errors (%d total)", int(reads["n_seq_errors"].sum()) if reads.height else 0); bar.update(1)
     comp=build_truth_components(cells, reads)
     tcells=build_truth_cells(cells, chain_status, mols, reads)
     tbar=build_truth_barcodes(cells, tcells, comp)
+    logger.info("[7/9] built truth: %d components, %d (well,barcode) keys", comp.height, tbar.height); bar.update(1)
     built=build_merged(reads, cfg.tso, cfg.rc_fraction, cfg.variable_length, cfg.seed)
-    reads_paths=write_merged_fastq(built, out)
+    logger.info("[8/9] assembled %d merged reads", built.height); bar.update(1)
+    reads_paths=write_merged_fastq(built, out, show_progress=not quiet)
     write_truth(out, comp, tcells, tbar, reads if cfg.write_read_truth else None)
+    logger.info("[9/9] wrote %d FASTQ file(s) + truth to %s", len(reads_paths), out); bar.update(1)
+    bar.close()
     cfg.to_json(out/"simplex_config.json")
     manifest={"simplex_version":_SV,"pairplex_version":_PPV,"python":sys.version.split()[0],
         "polars":polars.__version__,"numpy":numpy.__version__,"seed":cfg.seed,

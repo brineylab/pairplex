@@ -203,6 +203,26 @@ results when you then run PairPlex and score (all else equal).
 | `variable_length` | `True` | Randomly truncate cDNA 5'/3'. | Stresses clustering/consensus. |
 | `write_read_truth` | `False` | Also emit per-read provenance (`truth_reads.parquet`; large). | Debugging / route inspection. |
 
+### Observability
+| Knob | Default | Meaning |
+|---|---|---|
+| `quiet` | `False` | Suppress progress bars and drop logging to WARNING (silent run). |
+| `verbose` | `False` | DEBUG-level logging (per-stage detail + full config). Ignored if `quiet`. |
+
+By default `simplex.run` shows a stage progress bar (plus a per-well bar while writing FASTQ)
+and logs one INFO line per stage with counts, e.g.:
+
+```
+12:04:01 | simplex | INFO | run starting: input=./real_pairs.parquet wells=96 seed=0
+12:04:01 | simplex | INFO | [1/9] loaded 5000 cells
+12:04:02 | simplex | INFO | [4/9] generated 98,214 molecules (1,943 free)
+12:04:07 | simplex | INFO | [9/9] wrote 96 FASTQ file(s) + truth to ./sim_out
+```
+
+`simplex.score(...)` likewise takes `quiet`/`verbose`, shows a per-file progress bar, and logs
+a summary (`correct=… mispaired=… … | N truth key(s) with no output`). Logging uses the
+standard `logging` module (logger name `"simplex"`), so you can also configure it yourself.
+
 `run()` **refuses a non-empty output directory** (so a stale run can't contaminate a fresh one)
 and estimates the total read count up front, raising if it would blow a memory budget.
 

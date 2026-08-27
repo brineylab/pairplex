@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 import polars as pl
 from .matching import candidates, resolve
+from ._log import configure_logging, logger, pbar
 _LIGHT=("IGK","IGL")
 
 def _files(x):
@@ -73,7 +74,7 @@ def _classify_origin(valid_assignments, resident):
         cats.add("resident" if hr and lr else "ambient" if not hr and not lr else "resident_plus_ambient")
     return cats.pop() if len(cats)==1 else ("ambiguous" if cats else "unknown")
 
-def score(pairplex_output, truth_dir, *, pairplex_metadata=None):
+def score(pairplex_output, truth_dir, *, pairplex_metadata=None, quiet=False, verbose=False):
     """Score one or more PairPlex paired-output parquets against SimPlex truth.
 
     `pairplex_output` may be a single file, a list of files, or a directory (globbed for
@@ -81,7 +82,8 @@ def score(pairplex_output, truth_dir, *, pairplex_metadata=None):
     pass (scoring per-file would wrongly mark every other well's truth keys as `missing`).
     `truth_dir` must contain `truth_components.parquet` and `truth_barcodes.parquet` (as
     written by `io.write_truth`). `pairplex_metadata` is accepted but currently unused
-    (reserved for future `no_output_reason` refinement).
+    (reserved for future `no_output_reason` refinement). `quiet` suppresses the progress bar
+    and drops logging to WARNING; `verbose` enables DEBUG-level logging.
 
     For each returned pair, tries both (chain0, chain1) orientations against truth loci
     (IGH vs IGK/IGL) — never trusting PairPlex's own chain assignment — and resolves
@@ -108,10 +110,14 @@ def score(pairplex_output, truth_dir, *, pairplex_metadata=None):
         resident_at.setdefault((int(r["final_well"]),r["barcode"]),set()).add(r["source_pair_id"])
     kstat={(int(r["well"]),r["barcode"]):("collision" if r["is_collision"] else "ambient_only" if r["is_ambient_only"] else "singleton") for r in tbar.iter_rows(named=True)}
 
+    configure_logging(quiet=quiet, verbose=verbose)
     files=_files(pairplex_output)
+    logger.info("scoring %d PairPlex paired-output file(s) against truth %s (%d truth keys)",
+                len(files), truth_dir, tbar.height)
     rows,seen=[],{}
-    for f in files:
+    for f in pbar(files, desc="score", quiet=quiet):
         df=pl.read_parquet(f)
+        logger.debug("scoring %s (%d pairs)", Path(f).name, df.height)
         m=re.search(r"well(\d+)",Path(f).name); fname_well=int(m.group(1)) if m else None
         for r in df.to_dicts():
             well=_well_for(r,fname_well,f); bc=_bc(r.get("sequence_id:0") or r.get("name","")); key=(well,bc); entry=idx.get(key)
@@ -151,4 +157,12 @@ def score(pairplex_output, truth_dir, *, pairplex_metadata=None):
             "sequenced_both":r.get("n_sequenced_both_resident_cells",0)>0,
             "reference_pairable_both":r.get("n_reference_pairable_resident_cells",0)>0,
             "no_output_reason":None if oc>0 else "unknown"})
-    return pair_scores, pl.DataFrame(key_rows)
+    key_scores=pl.DataFrame(key_rows)
+    if pair_scores.height:
+        vc={s: int((pair_scores["pairing_status"]==s).sum()) for s in ("correct","mispaired","unmatchable","ambiguous")}
+        missing=int((key_scores["output_status"]=="missing").sum()) if key_scores.height else 0
+        logger.info("scored %d pairs: correct=%d mispaired=%d unmatchable=%d ambiguous=%d | %d truth key(s) with no output",
+                    pair_scores.height, vc["correct"], vc["mispaired"], vc["unmatchable"], vc["ambiguous"], missing)
+    else:
+        logger.info("scored 0 pairs (no PairPlex output matched)")
+    return pair_scores, key_scores
