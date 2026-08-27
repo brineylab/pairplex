@@ -15,10 +15,12 @@
 ## 1. Motivation & anti-circularity
 
 PairPlex mispairs heavy/light chains at scale. The core pipeline is correct on clean data
-(`INVESTIGATION_NOTES.md`); mispairing comes from contamination meeting permissive filters. To
-choose thresholds we need synthetic "raw sequencing" data reproducing the **physical
-mechanism** with **mechanism-faithful ground truth**, plus a scorer that measures the real
-failure and the precision/yield tradeoff.
+(`INVESTIGATION_NOTES.md`). Clean-data tests rule out several pipeline defects, and
+contamination interacting with permissive filters is the **leading hypothesis** because it
+reproduces the observed failure pattern — but it has **not** been directly confirmed on labeled
+real data (the data we have carry no "which pair is wrong" labels). To choose thresholds we need
+synthetic "raw sequencing" data reproducing the **physical mechanism** with **mechanism-faithful
+ground truth**, plus a scorer that measures the real failure and the precision/yield tradeoff.
 
 **Circularity guard:** the simulator must not merely inject the defect we expect and let the
 sweep rediscover it. Mitigations: keep knobs explicit and **sweep ranges** (never fit the
@@ -49,7 +51,10 @@ record for all phases; the *implementation plan* targets **Phase 0–2**.
 - **Phase 3 — Golden + single-factor mechanistic tests; realistic paired-end/fastp;
   sequence-similarity battery; ≥1 genuine extra-chain scenario.**
 - **Phase 4 — Calibration ranges + robust sweeps** across params, seeds, held-out sequences;
-  precision–yield **Pareto** with CIs; never optimize+evaluate on the same seeds.
+  precision–yield **Pareto** with CIs; never optimize+evaluate on the same seeds. Before any
+  **production** threshold recommendation, the sweep must cover ranges that **bracket the real
+  marginal distributions** (from Phase 0A if available) and show the chosen threshold is **robust
+  across those ranges** — not tuned to a single simulated point.
 - **Phase 5 — Scale redesign** (shard by final well; streaming; partitioned truth).
 
 **Deferred (tracked, not dropped):** alternative pairing *strategies* + a PairPlex
@@ -135,10 +140,18 @@ truth carries `final_well`; component aggregation counts reads by destination.
   resident_well, chain{0,1}_id, chain{0,1}_seq, chain{0,1}_locus`, and per chain: `captured,
   survived, n_molecules, n_umis, n_reads_generated, n_reads_resident, n_reads_free_out,
   n_reads_index_hopped_out`.
-- **`truth_barcodes.parquet`** — per `(final_well, final_barcode)`: resident source set,
-  `n_resident_cells`, `is_collision` (≥2 resident cells), **per-locus** `dominant_heavy_source`
-  / `dominant_light_source` (by observed reads/UMIs — dominance is per locus because the
-  dominant heavy and light source can differ, the exact mispair condition), `is_ambient_only`.
+- **`truth_barcodes.parquet`** — per `(well, barcode)` where the key set is the **union** of
+  *physical* resident keys `(resident_well, barcode)` from `cells` and *observed* keys
+  `(final_well, barcode)` from `reads`. **Physical occupancy comes from `cells`, never from
+  observed components** — otherwise a resident cell that produced no read silently disappears
+  (undercounting collisions, mislabeling `ambient_only`). Columns: resident source set,
+  `n_resident_cells`, `is_collision` (≥2 resident cells), `is_ambient_only` (observed key with
+  zero resident cells), and **collision counts** (not just booleans) computed from truth:
+  `n_captured_both_resident_cells`, `n_survived_both_resident_cells`,
+  `n_sequenced_both_resident_cells`, `n_reference_pairable_resident_cells` (each reduces to 0/1
+  at singleton keys); plus **per-locus** dominance by both reads and UMIs
+  (`dominant_heavy_source_by_reads/by_umis`, `dominant_light_source_by_reads/by_umis`, light =
+  `locus ∈ {IGK, IGL}`) since the dominant heavy and light source can differ.
 - **`truth_reads.parquet`** *(optional; `write_read_truth=False`)* — per-read; chunked by well.
 - **`simplex_config.json`** + **`run_manifest.json`** (resolved seed, versions, stage RNG keys).
 
@@ -154,30 +167,48 @@ Two outputs:
 column (tolerant of decorated `name`s like `{bc}_d{dd}_w{ww}` seen in real output — never assume
 `name == barcode`).
 
+**Score ALL PairPlex outputs jointly.** `score()` takes a **directory or list of paired
+parquets** (not one file), reads them all, and computes `pair_scores`+`key_scores` **once**
+against the whole truth — otherwise every other well's truth keys are wrongly marked `missing`.
+
 **Sequence matching returns a SET of candidate `source_pair_id`s** (duplicates are guaranteed:
 the reference input has ~40% shared heavies / ~50% shared lights). Matching is **locus-restricted**
 (from truth locus, never PairPlex's own annotation — circular) and **restricted to sources
-actually present at that key**, then resolved **jointly**: examine pairwise source assignments;
-mark ambiguous only when **multiple biologically distinct pair assignments** remain (heavy
-`{A,B}` ∩ light `{A}` → `A`, *not* ambiguous). Clean tests use exact/substring; noisy tests use
-orientation-aware alignment / edit-distance with an explicit ambiguity rule.
+actually present at that key**. Because Phase 1 has inherited RT + independent sequencing errors,
+matching is **bounded edit-distance** (via `edlib` infix/HW alignment) with a max-edit-fraction
+and a **minimum aligned length** so short sequences don't match many sources; containment is
+symmetric (`seq in full` **or** `full in seq`), not one-directional.
+
+**Pairing status and source resolution are separate axes.** Resolve jointly over the candidate
+sets: **any two non-empty candidate sets with empty intersection ⇒ `pairing_status=mispaired`**
+(a cross-source pair is impossible) even if one side's exact source is ambiguous; a unique
+intersection ⇒ `correct` with `source_resolution=unique`; a non-unique intersection ⇒ `correct`
+pairing but `source_resolution=ambiguous`; empty candidates ⇒ `unmatchable`.
 
 **Orthogonal status axes (named labels are derived, not primary):**
 ```
-pairing_status : correct | mispaired | unmatchable | ambiguous
-origin_status  : resident | resident_plus_ambient | ambient
-key_status     : singleton | collision | ambient_only
-output_status  : unique | duplicate | missing        # missing only on key_scores
+pairing_status         : correct | mispaired | unmatchable | ambiguous
+source_resolution      : unique | ambiguous | none
+origin_status          : resident | resident_plus_ambient | ambient | ambiguous | unknown
+key_status             : singleton | collision | ambient_only | unknown   # unknown = key absent from truth
+output_status          : unique | duplicate | missing                     # missing only on key_scores
 ```
+`origin_status` is computed from the resolved source(s)' `is_resident_source`; for an ambiguous
+pair, it is `ambiguous` unless every permitted source assignment shares one origin category.
+A key absent from truth is `key_status=unknown`, **never** silently `ambient_only`.
 `key_scores` also carries `output_count`, and (best-effort, **conditional on PairPlex metadata /
 unpaired output being available**) a `no_output` refinement:
 `filtered_all | single_chain_only | extra_contigs_rejected | annotation_failure | unknown`.
 
 **Threshold-independent observability levels** (fixed, never the threshold under test — avoids
-biasing the denominator): `captured_both`, `survived_both`, `sequenced_both` (≥1 final read each
-chain), `reference_pairable_both` (a frozen preregistered minimum, e.g. fixed min reads+UMIs, set
-only to exclude physically unrecoverable cases). Report **recall against both `sequenced_both`
-and `reference_pairable_both`.**
+biasing the denominator). **Computed per resident cell/source first** — `(well, barcode,
+origin_cell_id)` — then summarized at key level, so a collision key can never combine cell A's
+heavy with cell B's light into a false "both chains present": `captured_both`, `survived_both`,
+`sequenced_both` (≥1 final read each chain, same cell), `reference_pairable_both` (a frozen
+preregistered minimum, e.g. fixed min reads+UMIs, set only to exclude physically unrecoverable
+cases). These come from truth (`captured`/`survived`/`n_molecules` preserved in `truth_cells`),
+**not** from `captured_both = sequenced_both`. Report **recall against both `sequenced_both` and
+`reference_pairable_both`.**
 
 **Metrics (all reported; "best threshold" is not scalar):** biological recovery, technical
 observability (levels above), algorithmic recall, pair precision (resident-correct among
@@ -213,9 +244,11 @@ asserting actual fastp retention.
 simplex.run(
     input_data, output_directory,
     n_cells=None, wells=96,
-    cells_per_droplet_mean=5, cells_per_droplet_sd=2, barcode_reuse=False,
+    cells_per_droplet_mean=5, cells_per_droplet_sd=2,
+    barcode_pool_size=None,            # None = unique barcode per droplet; int = sample from a
+                                       # pool of this size (enables controlled reuse/collision)
     recovery_rate=0.5, molecules_per_chain_mean=10,
-    release_rate=0.02,                 # fraction of molecules released/free (ambient pool)
+    release_rate=0.02,                 # fraction of molecules released/free (redistributed, not added)
     molecule_survival_rate=0.8,        # molecule Bernoulli survival BEFORE amplification
     reads_per_molecule_mean=5,
     rt_sub_rate=0.0, rt_indel_rate=0.0,            # inherited by a UMI's read family
@@ -225,24 +258,39 @@ simplex.run(
     output_mode="merged", read_length=300, rc_fraction=0.0, platform="illumina",
     variable_length=True, write_read_truth=False, seed=0,
 )
-simplex.score(pairplex_paired_parquet, truth_dir, *, pairplex_metadata=None) -> (pair_scores, key_scores)
+simplex.score(pairplex_output_dir_or_parquet_list, truth_dir, *, pairplex_metadata=None) -> (pair_scores, key_scores)
 ```
 
-- `leakage_rate` (v1) is **removed**; ambient is `release_rate` (redistribution). Barcode-changing
-  events are the deferred `barcode_swap`.
-- `ambient_only_barcodes` removed — emergent.
-- **Config validation + read-count/OOM guard**: estimate total reads
-  (`n_cells·2·recovery·molecules·survival·depth·(1+release drift)`) and refuse / warn past a
-  budget.
+- `leakage_rate`/`ambient_only_barcodes` (v1) **removed**; ambient is `release_rate`
+  (redistribution — moves molecules, does **not** create extra ones). Barcode-changing events are
+  the deferred `barcode_swap`. `barcode_reuse` boolean replaced by explicit `barcode_pool_size`.
+- **Locus is required for Phase 1–2.** `validate()` fails if the input lacks `locus:0/1` and no
+  frozen source-annotation is supplied — never silently proceed with `"unknown"` loci (the scorer
+  only searches `IGH/IGK/IGL`). Also validate that repeated `source_pair_id`s describe the **same**
+  sequences+loci, so two unrelated records with the same name aren't treated as equivalent.
+- **`output_mode="paired"` is rejected in Phase 1–2** (only `"merged"` implemented; paired = Phase 3).
+- **`index_hop_rate` must be 0 when `wells==1`** (a hop can't change well); validation enforces it.
+- **Read-count/OOM guard**: `validate(actual_n_cells=…)` estimates
+  `n_cells·2·recovery·molecules·survival·depth` (**no** release factor — release moves, not adds)
+  and refuses past a budget; `run()` calls it with the resolved cell count (works when `n_cells=None`).
+- `run()` **fails on a non-empty output directory** (or cleans it) so stale FASTQs can't
+  contaminate an experiment.
 - All stage schemas (cells → molecules → reads → built) are declared in the plan, not just truth.
 
-## 10. Keyed RNG (reproducible under sharding)
+## 10. Reproducibility & keyed RNG
 
-Randomness derives from stable keys, **not** `seed + fixed_offset` (insufficient for
-chunk-order invariance) and **never** Python `hash()` (process-randomized). Use
-`numpy.random.SeedSequence` spawning (or Philox counter-based) seeded from a stable integer key
-built from `(master_seed, stage_name, entity_id|well_id, chunk_id)` via a fixed hash
-(`hashlib.blake2b` digest → int). Result is independent of chunk size and processing order.
+**v1 guarantee (honest scope):** *same seed + same input (order) + same execution layout →
+identical content.* Randomness is drawn from **per-stage** named streams via
+`rng_for(seed, stage) = SeedSequence(blake2b("{seed}|{stage}"))` (never `seed+offset`, never
+Python `hash()`), so stages are independent and a run is bit-reproducible. It does **not** yet
+guarantee invariance to row reordering or chunk boundaries — stages consume one sequential RNG
+over the whole table.
+
+**Deferred to Phase 5 (true sharding invariance):** entity-keyed randomness — derive each draw
+from a stable identifier `(stage, cell_id|molecule_id, draw_slot)` (Philox counter or
+blake2b-seeded per-entity), so results are independent of partition/chunk size. Note that putting
+`chunk_id` in the seed does **not** achieve this (re-chunking changes chunk IDs). v1 does not
+claim chunk-size invariance.
 
 ## 11. Hypothesis matrix (visible, phased)
 
@@ -256,7 +304,8 @@ built from `(master_seed, stage_name, entity_id|well_id, chunk_id)` via a fixed 
 | `(final_well,barcode)` scorer, orthogonal axes, key_scores | core | 0B/2 |
 | Chain dropout / broadened "resident chain absent" | core | 1/2 |
 | Collision-induced mispair (same-barcode, same-well, asymmetric loss) | core test | 2/3 |
-| Barcode reuse across droplets | optional mode, default off | 1 (mode) |
+| Barcode reuse across droplets (`barcode_pool_size`) | optional mode, default off | 1 (mode) |
+| UMI sequencing errors (inflate apparent distinct-UMI count → affects `min_cluster_umis`) | deferred, **tracked** | 3/4 |
 | `barcode_swap` / PCR recombination | deferred, separate knob | later |
 | PCR chimeras (H-L fusion, high-support) | deferred; **must be in final eval** | later |
 | Genuine extra chains (dual-light, nonproductive, alt heavy) | ≥1 explicit scenario | 3 |
@@ -267,22 +316,33 @@ built from `(master_seed, stage_name, entity_id|well_id, chunk_id)` via a fixed 
 
 ## 12. Testing plan
 
-**Deterministic mechanism fixtures (prove the mechanism; before any statistical test):**
-1. **Exact ambient mispair** — cells A,B share barcode X, different wells, A-light absent, one
-   B-light molecule routed to A's well; permissive PairPlex must emit A_H + B_L.
+**Deterministic mechanism fixtures (prove the mechanism; before any statistical test).** These
+**must be genuinely controlled**, not stochastic full-generator runs "hoping" the seed produces
+the condition: construct exact low-level tables (`cells`/`molecules`/`reads`) via private test
+helpers that force the routing, then run only the downstream FASTQ → PairPlex → scorer path
+free. Stochastic *frequency* behavior is covered by the separate single-factor tests.
+0. **Clean golden invariant** — 1 cell/barcode, `barcode_pool_size=None`, `release_rate=0`,
+   `recovery=survival=1`, no errors, `wells≥1` → ~100% `resident_correct`, **no** `ambiguous`/
+   `unmatchable` pairs. (The one-cell-with-dropout negative control does not replace this.)
+1. **Exact ambient mispair** — `wells≥2`; cells A,B share barcode X in different wells; force
+   A-heavy present, A-light absent, one **free** B-light molecule routed to A's well; permissive
+   PairPlex must emit A_H + B_L (`pairing_status=mispaired`). *(wells=1 would make this a
+   collision, not ambient — invalid.)*
 2. **One-cell negative control** — 1 cell/barcode, release+dropout on; **zero cross-source
    mispairs**, `ambient_coherent` outputs allowed.
-3. **Same-well collision** — two same-barcode cells in one well, asymmetric chain loss →
-   classified collision-induced mispair.
-4. **Route composition** — a free molecule amplified in one well, one read index-hops;
-   `amplification_well ≠ final_well`, barcode+UMI unchanged.
-5. **Joint ambiguity** — shared heavy + unique light resolves to one source (not
-   `sequence_ambiguous`).
+3. **Same-well collision** — two same-barcode cells forced into one well, asymmetric chain loss →
+   mispair at a `key_status=collision` key.
+4. **Route composition** — a free molecule amplified in one well, one read forced to index-hop;
+   assert (via `truth_reads`) `amplification_well ≠ final_well`, barcode+UMI unchanged.
+5. **Joint ambiguity** — shared heavy across two source pairs + unique light resolves to one
+   source (`pairing_status=correct`, `source_resolution` may be `unique`), not `ambiguous`.
 6. **Missing output** — both resident chains `reference_pairable`, but a contaminant contig
    causes PairPlex to emit no pair → `key_scores` row `output_status=missing`.
 
 **Per-stage unit tests** (keyed RNG, deterministic): droplet distribution + barcodes shared
-within/distinct across (unless `barcode_reuse`); **well uniformity + analytic collision rate**;
+within/distinct across (unless `barcode_pool_size` set, which must produce a verified reuse
+collision); **well uniformity AND analytic same-barcode co-occupancy** `Σ_d C(k_d,2)/wells`
+within tolerance;
 molecule recovery/survival/UMIs; free/resident split fraction; free-molecule redistribution
 retains barcode+UMI; index-hop cross-well fraction; inherited-RT-error family coherence; read
 layout **round-trips through `pairplex.parse_barcodes`**; config validation/OOM guard.
