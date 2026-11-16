@@ -32,9 +32,10 @@ def main():
     lo, hi = map(int, a.wells.split("-"))
     frames = []
     for f in glob.glob(os.path.join(a.parsed_dir, "VDJ_*.parquet")):
-        w = int(re.search(r"VDJ_(\d+)\.parquet$", f).group(1))
-        if not lo <= w <= hi:
+        m = re.search(r"VDJ_(\d+)\.parquet$", f)  # skips stray files such as VDJ_103-checkpoint.parquet
+        if not m or not lo <= int(m.group(1)) <= hi:
             continue
+        w = int(m.group(1))
         frames.append(
             pl.scan_parquet(f).select("barcode", "umi")
             .filter(pl.col("barcode").hash(seed=0) % a.sample_mod == 0)

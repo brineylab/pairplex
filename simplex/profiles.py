@@ -5,8 +5,9 @@ study (UDA-seq style: overloaded 10x HT 5' lane, ~1M fixed cells per reaction, 9
 pools of 24). Sources are in the repo's `diagnosis/` scripts; values are medians/ballparks, not
 fits — sweep around them.
 
-- release (pre-split leakage of barcoded cDNA out of fixed cells): ~0.8 overall, lower for heavy
-  (~0.65) than light (~0.82)  [residency_dedup.py]
+- release (pre-split leakage of barcoded cDNA out of fixed cells): medians over 23 reactions
+  heavy 0.53, kappa 0.86, lambda 0.84 (light > heavy in every reaction, p < 1e-4); naive and memory
+  reactions do not differ  [residency_dedup.py, summarize_leakage.py]
 - ambient (pre-RT capture of free mRNA into other droplets): ~20-27% of naive chain occurrences
   are copies under other barcodes  [across_barcode.py, satellites.py]; ambient_rate ~0.3
 - loading: ~1M cells over ~456k observed barcodes -> lambda ~2.2
@@ -28,8 +29,8 @@ PRINCEPS_2025 = dict(
     molecule_survival_rate=0.8,
     reads_per_molecule_mean=8.0,
     release_rate=0.8,
-    release_rate_heavy=0.65,
-    release_rate_light=0.82,
+    release_rate_heavy=0.55,
+    release_rate_light=0.85,
     ambient_rate=0.3,
     index_hop_rate=0.017,
     sequencing_sub_rate=0.008,
