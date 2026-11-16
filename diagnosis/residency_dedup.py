@@ -52,6 +52,7 @@ def main():
     ap.add_argument("--species-id", type=float, default=0.94)
     ap.add_argument("--min-len", type=int, default=200)
     ap.add_argument("--label", default="")
+    ap.add_argument("--pool-size", type=int, default=24, help="wells per i7 pool (post-pool events stay within a pool)")
     ap.add_argument("--json-out", default=None)
     a = ap.parse_args()
     lo, hi = map(int, a.wells.split("-"))
@@ -95,7 +96,10 @@ def main():
                 cls[c] = cls.get(c, 0) + 1
             known = {c: n for c, n in cls.items() if c != "unk"}
             chain = max(known, key=known.get) if known else "unk"
-            rows.append(dict(barcode=bc, umis=len(m), n_wells=len(counts), modal=max(counts.values()), chain=chain))
+            mw = max(counts, key=counts.get)
+            out_same_pool = sum(n for w, n in counts.items() if w != mw and (w - 1) // a.pool_size == (mw - 1) // a.pool_size)
+            rows.append(dict(barcode=bc, umis=len(m), n_wells=len(counts), modal=max(counts.values()), chain=chain,
+                             modal_well=mw, out_same_pool=out_same_pool))
     r = pl.DataFrame(rows)
     r.write_parquet(a.out)
     summ = (r.with_columns(pl.col("umis").cut([1, 2, 3, 5, 10, 20], labels=["1", "2", "3", "4-5", "6-10", "11-20", ">20"]).alias("umi_bin"))
@@ -111,6 +115,19 @@ def main():
         out = 1 - big["modal"].sum() / big["umis"].sum()
         print(f">=6 distinct UMIs: outside-modal {out:.3f} -> implied displacement f ~= {out / (1 - 1 / W):.3f} (W={W})")
     res = {"label": a.label, "wells": a.wells, "W": W, "molecules": mol.height, "species": r.height}
+    # where do displaced molecules go? same pool as the main well (post-pool PCR) vs uniform (pre-split)
+    wells_present = sorted(mol["well"].unique().to_list())
+    big = r.filter(pl.col("umis") >= 3)
+    out_tot = int((big["umis"] - big["modal"]).sum())
+    if out_tot:
+        exp = []
+        for mw in big["modal_well"].to_list():
+            same = sum(1 for w in wells_present if w != mw and (w - 1) // a.pool_size == (mw - 1) // a.pool_size)
+            exp.append(same / max(len(wells_present) - 1, 1))
+        res["displaced_same_pool_obs"] = float(big["out_same_pool"].sum() / out_tot)
+        res["displaced_same_pool_exp_uniform"] = float(sum(e * (u - mo) for e, u, mo in zip(exp, big["umis"], big["modal"])) / out_tot)
+        print(f"displaced molecules in the main well's pool of {a.pool_size}: observed {res['displaced_same_pool_obs']:.3f} "
+              f"vs uniform expectation {res['displaced_same_pool_exp_uniform']:.3f}")
     for name, sub in [("all", r)] + [(c, r.filter(pl.col("chain") == c)) for c in ("H", "K", "L", "unk")]:
         b6 = sub.filter(pl.col("umis") >= 6)
         b3 = sub.filter(pl.col("umis") >= 3)
