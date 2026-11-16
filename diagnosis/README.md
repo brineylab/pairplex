@@ -14,5 +14,6 @@ within modest memory. Inputs are PairPlex per-well outputs (`parsed/VDJ_*.parque
 | `umi_cross_well.py` | same molecule in several wells (post-pool swapping / index hopping) |
 | `residency.py` | cross-well spread of a chain's molecules from per-well contig UMI counts (inflated by swaps) |
 | `residency_dedup.py` | same, counting each molecule once at its top well → leakage estimate |
+| `funnel.py` | per-well read/molecule funnel through every PairPlex stage + barcode composition |
 
 Requires `edlib`, `polars`, `pyspoa` (PairPlex deps).
