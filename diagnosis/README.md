@@ -22,6 +22,7 @@ within modest memory. Inputs are PairPlex per-well outputs (`parsed/VDJ_*.parque
 | `umi_integrity.py` | molecule splitting by greedy clustering + UMI error signature (Hamming-1 excess) |
 | `duplicate_contigs.py` | same-CDR3 duplicate contigs per barcode-well, real vs SimPlex (realism check for the fragment model) |
 | `simplex_drop_reasons.py` | ground-truth reasons per-well PairPlex drops simulated cells (collision / true extra chain / lost / spurious contig) |
+| `simplex_ceiling.py` | information ceiling on SimPlex truth: cells pairable in principle (barcode-unique, clean co-occurrence, home-well oracle) |
 | `summarize_leakage.py` | leakage by chain across reactions; light vs heavy; vs ambient burden |
 | `figures.py` | static PNG figures for the deck from results/ |
 | `funnel.py` | per-well read/molecule funnel through every PairPlex stage + barcode composition |
