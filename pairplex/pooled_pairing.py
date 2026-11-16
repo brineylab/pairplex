@@ -121,11 +121,32 @@ def home_posteriors(species_wells: pl.DataFrame, n_wells: int, leakage: float) -
     return sw.join(z, on=SPECIES).with_columns((pl.col("_ln") - pl.col("_logZ")).exp().alias("p_home")).drop("_ln", "_logZ")
 
 
+def flag_ambient(pooled: pl.DataFrame, min_barcodes: int = 5, max_umis: int = 1) -> pl.DataFrame:
+    """
+    Flag likely ambient copies (pre-RT capture of free mRNA into other droplets).
+
+    A chain (locus, V, J, junction) found under >= ``min_barcodes`` droplet barcodes has a parent
+    (the barcode with the most pooled UMIs); non-parent copies with <= ``max_umis`` pooled UMIs are
+    flagged. Public light chains legitimately recur across cells, so this is opt-in and should be
+    validated against ground truth (SimPlex) before use. Adds boolean column ``ambient``.
+    """
+    key = ["locus", "v_gene", "j_gene", "junction"]
+    return pooled.with_columns(
+        pl.col("barcode").n_unique().over(key).alias("_nb"),
+        (pl.col("N") == pl.col("N").max().over(key)).alias("_parent"),
+    ).with_columns(
+        ((pl.col("_nb") >= min_barcodes) & (pl.col("N") <= max_umis) & ~pl.col("_parent")).alias("ambient")
+    ).drop("_nb", "_parent")
+
+
 def pair_pooled(
     occ: pl.DataFrame,
     n_wells: int | None = None,
     leakage: float | None = None,
     min_confidence: float = 0.0,
+    ambient_filter: bool = False,
+    ambient_min_barcodes: int = 5,
+    ambient_max_umis: int = 1,
 ) -> tuple[pl.DataFrame, dict]:
     """
     Pool contigs by barcode, assign home-well posteriors, pair H/L by shared home well.
@@ -141,6 +162,8 @@ def pair_pooled(
         Pre-split leakage f; estimated from the data if None.
     min_confidence : float
         Drop pairs below this confidence (default keeps all, with their score).
+    ambient_filter : bool
+        Exclude likely ambient copies from pairing (see ``flag_ambient``). Off by default.
 
     Returns
     -------
@@ -162,6 +185,11 @@ def pair_pooled(
         f = 0.8  # documented fallback when too few well-supported species exist
     sw = home_posteriors(sw, W, f)
     pooled = sw.group_by(SPECIES).agg(pl.col("n").sum().alias("N"))
+    n_ambient = 0
+    if ambient_filter:
+        flagged = flag_ambient(pooled, ambient_min_barcodes, ambient_max_umis)
+        n_ambient = int(flagged["ambient"].sum())
+        pooled = flagged.filter(~pl.col("ambient")).drop("ambient")
     sw = sw.join(pooled, on=SPECIES)
 
     def side(locus_filter, s):
@@ -190,7 +218,8 @@ def pair_pooled(
                  .filter(pl.col("confidence") >= min_confidence)
                  .with_columns(pl.col("barcode").alias("name"))
                  .sort("confidence", descending=True))
-    info = {"wells": W, "leakage": f, "leakage_estimated": est, "species": int(pooled.height), "pairs": int(pairs.height)}
+    info = {"wells": W, "leakage": f, "leakage_estimated": est, "species": int(pooled.height), "pairs": int(pairs.height),
+            "ambient_flagged": n_ambient}
     return pairs, info
 
 
@@ -200,11 +229,12 @@ def run_pooled_pairing(
     wells: tuple[int, int] | None = None,
     leakage: float | None = None,
     min_confidence: float = 0.0,
+    ambient_filter: bool = False,
 ) -> tuple[pl.DataFrame, dict]:
     """Load a per-well PairPlex run, pair with ``pair_pooled`` and write a parquet (default
     ``<run_dir>/pooled/pooled_pairs.parquet``)."""
     occ = load_run(run_dir, wells)
-    pairs, info = pair_pooled(occ, leakage=leakage, min_confidence=min_confidence)
+    pairs, info = pair_pooled(occ, leakage=leakage, min_confidence=min_confidence, ambient_filter=ambient_filter)
     out = Path(output_file) if output_file else Path(run_dir) / "pooled" / "pooled_pairs.parquet"
     out.parent.mkdir(parents=True, exist_ok=True)
     pairs.write_parquet(out)

@@ -55,6 +55,7 @@ def run(
     truncation: str = "fragment_5p",
     fragment_rate: float = 0.1,
     fragment_rate_heavy: float | None = None,
+    umi_sub_rate: float = 0.0,
     quiet: bool = False,
     verbose: bool = False,
 ) -> "Path":
@@ -154,6 +155,9 @@ def run(
     fragment_rate, fragment_rate_heavy : float, float | None
         Fraction of molecules that are 5'-fragmented (``fragment_rate_heavy`` overrides for IGH;
         real heavy chains are fragmented far more often than light chains).
+    umi_sub_rate : float, default 0.0
+        Per-base substitution rate in each read's UMI (PCR/sequencing). Error UMIs inflate UMI
+        counts for the same molecule, as in uncorrected real data.
     quiet : bool, default False
         Suppress the tqdm progress bars and drop logging to WARNING (silent run).
     verbose : bool, default False
@@ -196,7 +200,8 @@ def run(
         molecules_per_chain_mean_light=cfg.molecules_per_chain_mean_light, ambient_rate=cfg.ambient_rate)
     logger.info("[4/9] generated %d molecules (%d free, %d ambient)", mols.height, int(mols["is_free"].sum()) if mols.height else 0,
                 int(mols["is_ambient"].sum()) if mols.height else 0); bar.update(1)
-    mols, reads=route_and_amplify(mols, cfg.wells, cfg.molecule_survival_rate, cfg.reads_per_molecule_mean, cfg.index_hop_rate, cfg.seed)
+    mols, reads=route_and_amplify(mols, cfg.wells, cfg.molecule_survival_rate, cfg.reads_per_molecule_mean, cfg.index_hop_rate, cfg.seed,
+        umi_sub_rate=cfg.umi_sub_rate)
     logger.info("[5/9] amplified to %d reads (%d molecules survived)", reads.height, int(mols["survived"].sum()) if mols.height else 0); bar.update(1)
     reads=apply_sequencing_errors(reads, cfg.sequencing_sub_rate, cfg.sequencing_indel_rate, cfg.seed)
     logger.info("[6/9] applied sequencing errors (%d total)", int(reads["n_seq_errors"].sum()) if reads.height else 0); bar.update(1)

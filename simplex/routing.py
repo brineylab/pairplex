@@ -12,7 +12,7 @@ from ._rng import rng_for
 _READS_SCHEMA={"read_id":pl.Utf8,"molecule_id":pl.Int64,"origin_cell_id":pl.Int64,"source_pair_id":pl.Utf8,
     "chain":pl.Int8,"locus":pl.Utf8,"umi":pl.Utf8,"barcode":pl.Utf8,"amplification_well":pl.Int64,
     "final_well":pl.Int64,"is_free":pl.Boolean,"is_index_hopped":pl.Boolean,"cdna":pl.Utf8,"n_seq_errors":pl.Int64,"is_ambient":pl.Boolean}
-def route_and_amplify(molecules,wells,molecule_survival_rate,reads_per_molecule_mean,index_hop_rate,seed):
+def route_and_amplify(molecules,wells,molecule_survival_rate,reads_per_molecule_mean,index_hop_rate,seed,umi_sub_rate=0.0):
     """Route molecules to an amplification well, apply survival, then amplify into reads with index hopping.
 
     `amplification_well` is `resident_well` for resident molecules and a uniform random
@@ -27,6 +27,11 @@ def route_and_amplify(molecules,wells,molecule_survival_rate,reads_per_molecule_
 
     Empty-safe: if `molecules` is empty or no molecule survives, returns a typed empty
     `reads` frame matching `_READS_SCHEMA`.
+
+    `umi_sub_rate` (default 0): per-base substitution rate applied to each READ's UMI after
+    amplification (sequencing/PCR error in the UMI). Error UMIs are distinct strings for the same
+    molecule, so they inflate UMI counts exactly as uncorrected real data does (real reads: ~21% of
+    UMIs are 1-read Hamming-1 neighbours of a deep UMI). `molecule_id` keeps the truth.
 
     Returns `(molecules, reads)`: `molecules` is the input frame with `amplification_well`
     and `survived` filled in; `reads` is the per-read record used by `reads.py`/`truth.py`.
@@ -45,6 +50,17 @@ def route_and_amplify(molecules,wells,molecule_survival_rate,reads_per_molecule_
     rep=np.repeat(np.arange(survd.height),depth); reads=survd[rep]; k=reads.height
     hop=rng.random(k)<index_hop_rate; off=rng.integers(1,max(2,wells),size=k); a=reads["amplification_well"].to_numpy()
     final=np.where(hop,(a+off)%wells,a).astype(np.int64)
+    if umi_sub_rate>0 and k:
+        urng=rng_for(seed,"umierr")
+        U=np.array([list(u) for u in reads["umi"].to_list()])
+        hit=urng.random(U.shape)<umi_sub_rate
+        if hit.any():
+            alt=np.array(list("ACGT"))
+            sub=alt[urng.integers(0,4,size=int(hit.sum()))]
+            same=sub==U[hit]
+            sub[same]=np.array([{"A":"C","C":"G","G":"T","T":"A"}.get(c,"A") for c in sub[same]])
+            U[hit]=sub
+            reads=reads.with_columns(pl.Series("umi",["".join(r) for r in U]))
     reads=reads.with_columns([pl.Series("read_id",[f"r{i}" for i in range(k)]),pl.Series("final_well",final),
         pl.Series("is_index_hopped",hop),pl.lit(0,pl.Int64).alias("n_seq_errors")]).select(list(_READS_SCHEMA.keys()))
     return mols, reads

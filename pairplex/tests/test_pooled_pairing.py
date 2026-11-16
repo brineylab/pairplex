@@ -46,3 +46,12 @@ def test_leakage_estimate():
     sw = pl.DataFrame({"barcode": ["A"] * 8, "locus": ["IGH"] * 8, "v_gene": ["V"] * 8, "j_gene": ["J"] * 8,
                        "junction": ["X"] * 8, "well": list(range(8)), "n": [3] + [1] * 7})
     assert estimate_leakage(sw, 10) == pytest.approx(0.7 / 0.9)
+
+
+def test_ambient_filter_drops_low_support_copies_but_keeps_parent():
+    from pairplex.pooled_pairing import flag_ambient
+    rows = [{"barcode": f"B{i}", "locus": "IGK", "v_gene": "V", "j_gene": "J", "junction": "X", "N": (9 if i == 0 else 1)} for i in range(6)]
+    rows.append({"barcode": "C", "locus": "IGK", "v_gene": "V", "j_gene": "J", "junction": "Y", "N": 1})
+    f = flag_ambient(pl.DataFrame(rows), min_barcodes=5, max_umis=1)
+    amb = dict(zip(f["barcode"] + f["junction"], f["ambient"]))
+    assert amb["B0X"] is False and all(amb[f"B{i}X"] for i in range(1, 6)) and amb["CY"] is False

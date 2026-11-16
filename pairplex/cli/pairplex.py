@@ -249,10 +249,11 @@ def make_fastq(
 @click.option("--wells", type=str, default=None, help="Well range of one reaction, e.g. 1-96 (default: all wells)")
 @click.option("--leakage", type=float, default=None, help="Pre-split leakage f in [0,1); estimated from the data if omitted")
 @click.option("--min-confidence", type=float, default=0.0, help="Drop pairs below this confidence (default keeps all, scored)")
-def pair_pooled_cmd(run_directory, output, wells, leakage, min_confidence):
+@click.option("--ambient-filter/--no-ambient-filter", default=False, help="Exclude likely ambient copies (opt-in; validate first)")
+def pair_pooled_cmd(run_directory, output, wells, leakage, min_confidence, ambient_filter):
     """Pool a per-well run by droplet barcode and pair H/L by shared home well, with a confidence per pair."""
     rng = tuple(int(x) for x in wells.split("-")) if wells else None
-    pairs, info = run_pooled_pairing(run_directory, output, rng, leakage, min_confidence)
+    pairs, info = run_pooled_pairing(run_directory, output, rng, leakage, min_confidence, ambient_filter)
     print(f"wells={info['wells']} leakage={info['leakage']:.3f} ({'estimated' if info['leakage_estimated'] else 'given'}) "
           f"species={info['species']} pairs={info['pairs']} -> {info['output']}")
     for t in (0.5, 0.9):

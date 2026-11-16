@@ -15,6 +15,8 @@ fits — sweep around them.
 - light template ~8x heavy by qPCR (library level); light molecules per chain set 2x heavy
 - per-read divergence of reads from one molecule ~2.3% (incl. PCR) -> sub 0.008, indel 0.0005
 - index hopping / post-pool swapping: ~1.7% of reads leave the molecule's top well
+- UMI errors: 20.7% of real UMIs are 1-read Hamming-1 neighbours of a >=5-read UMI (x3,520 the
+  random rate) -> umi_sub_rate 0.004 per base per read  [umi_integrity.py]
 - fragmented RNA: real heavy reads are mostly short 5'-truncated fragments (constant region, no V
   start; 75% of reads lost at annotation are heavy) -> fragment_rate_heavy 0.6, light 0.3  [funnel.py]
 
@@ -38,6 +40,7 @@ PRINCEPS_2025 = dict(
     truncation="fragment_5p",
     fragment_rate=0.3,
     fragment_rate_heavy=0.6,
+    umi_sub_rate=0.004,
 )
 
 __all__ = ["PRINCEPS_2025"]

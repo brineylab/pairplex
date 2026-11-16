@@ -109,3 +109,14 @@ def test_config_validates_v2_knobs(tmp_path):
     for bad in (dict(ambient_rate=-1), dict(release_rate_heavy=1.5), dict(truncation="x"), dict(molecules_per_chain_mean_light=0)):
         with pytest.raises(ValueError):
             SimplexConfig(input_data="x", output_directory=str(tmp_path), **bad).validate(actual_n_cells=10)
+
+
+# --- UMI errors ---------------------------------------------------------------------------
+def test_umi_errors_inflate_umi_strings_not_molecules():
+    m, _ = generate_molecules(_cells(300), 1.0, 4.0, 0.0, 10, 0.0, 0.0, 0)
+    _, clean = route_and_amplify(m, 8, 1.0, 8.0, 0.0, 0)
+    _, noisy = route_and_amplify(m, 8, 1.0, 8.0, 0.0, 0, umi_sub_rate=0.01)
+    assert clean.select("barcode", "umi").unique().height == clean["molecule_id"].n_unique()
+    infl = noisy.select("barcode", "umi").unique().height / noisy["molecule_id"].n_unique()
+    assert 1.3 < infl < 2.2                          # ~8 reads x 10 bases x 1% -> many error UMIs
+    assert noisy["molecule_id"].n_unique() == clean["molecule_id"].n_unique()
