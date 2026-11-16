@@ -420,7 +420,7 @@ built to make PairPlex threshold selection an evidence-based, precision/yield de
 | Change | Knob(s) | Why |
 |---|---|---|
 | **Fix: barcode pool** | `barcode_pool_size` | v1 capped the pool at the droplet count and sampled with replacement, so every pool ≥ K behaved identically (reuse forced even for 100k). Now droplets draw from a pool of exactly the requested size. |
-| **Fix: truncation model** | `truncation`, `fragment_rate`, `fragment_rate_heavy` | v1 cut 0–10% off both ends of *every read*, splintering single molecules under PairPlex's global-alignment clustering (PairPlex's default threshold gave 0 pairs; "more depth → fewer pairs" was an artifact). Default is now `"fragment_5p"`: full-length amplicons (TSO → primer) plus a fraction of 5'-fragmented molecules, per molecule. `"per_read_both"` reproduces v1. |
+| **Fix: truncation model** | `truncation`, `fragment_rate`, `fragment_rate_heavy` | v1 cut 0–10% off both ends of *every read*, splintering single molecules under PairPlex's global-alignment clustering (PairPlex's default threshold gave 0 pairs; "more depth → fewer pairs" was an artifact). Default is now `"fragment_5p"`: full-length amplicons (TSO → primer) plus a fraction of 5'-fragmented molecules, per molecule. `fragment_keep` = kept 3' fraction of a fragment (input chains are V(D)J only, so long values keep CDR3 + V and create extra same-CDR3 contigs that real data does not show; the profile uses 0.05–0.35, matching the real 1.5–3.1% duplicate-contig rate — `diagnosis/duplicate_contigs.py`). `"per_read_both"` reproduces v1. |
 | Chain-specific leakage | `release_rate_heavy`, `release_rate_light` | Light chains leak more than heavy in every real reaction. |
 | Light template abundance | `molecules_per_chain_mean_light` | Light libraries ~8× heavy by qPCR. |
 | **Ambient across barcodes** | `ambient_rate` | Pre-RT capture of free mRNA into *other* droplets: copies get a new barcode + UMI and a random well (`is_ambient`, `n_reads_ambient` in truth). Release only moves molecules across wells. |
@@ -436,7 +436,7 @@ reads = simplex.run("pairs.parquet", "sim_out", n_cells=4000, wells=48, seed=0, 
 ```
 Values and their sources are documented in `simplex/profiles.py` (λ 2.2; heavy/light leakage
 0.55/0.85; ambient 0.3; 2/4 molecules per heavy/light chain; 8 reads per molecule; per-read errors
-0.8%; UMI errors 0.4%/base; 5'-fragmentation 60% heavy / 30% light). Real wells hold ~10k cells,
+0.8%; UMI errors 0.4%/base; 5'-fragmentation 60% heavy / 30% light, keeping 5–35% of the V(D)J). Real wells hold ~10k cells,
 which is not tractable; collisions depend on λ and the number of wells, not on cells per well.
 
 ### Ground-truth validation runner
