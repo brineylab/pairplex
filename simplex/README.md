@@ -10,6 +10,15 @@ it sits beside it (`import simplex`).
 
 ---
 
+> **v2 (calibrated).** A diagnosis of real PairPlex data (`../diagnosis/`) measured the regime
+> SimPlex must reproduce: barcoded cDNA leaks out of fixed cells before the well split (heavy ≈ 0.55,
+> light ≈ 0.85 of molecules end up in other wells), ambient mRNA is copied into other droplets
+> before RT, most chains carry 1–2 molecules, ~1/5 of UMIs are sequencing errors, and heavy chains
+> are often 5'-fragmented. v2 adds those mechanisms, fixes two v1 artifacts, and ships the
+> calibrated profile `simplex.PRINCEPS_2025`. In that regime, PairPlex's default per-well pairing
+> scores ~35–40% precision against ground truth — the same range as the real data's clonal purity.
+> See **[§12 v2: calibrated simulation](#12-v2-calibrated-simulation)** before using any v1 result.
+
 ## Table of contents
 
 1. [Why SimPlex exists](#1-why-simplex-exists)
@@ -23,6 +32,7 @@ it sits beside it (`import simplex`).
 9. [How to read the results (interpretation guide)](#9-how-to-read-the-results-interpretation-guide)
 10. [What the tests demonstrate, and why](#10-what-the-tests-demonstrate-and-why)
 11. [Scope & limitations](#11-scope--limitations)
+12. [v2: calibrated simulation](#12-v2-calibrated-simulation)
 
 ---
 
@@ -400,3 +410,45 @@ Two layers, both runnable (`pytest simplex/`):
 
 *Design of record: `docs/superpowers/specs/2026-08-27-simplex-generator-design-v5.md`. SimPlex was
 built to make PairPlex threshold selection an evidence-based, precision/yield decision.*
+
+
+---
+
+## 12. v2: calibrated simulation
+
+### What changed and why
+| Change | Knob(s) | Why |
+|---|---|---|
+| **Fix: barcode pool** | `barcode_pool_size` | v1 capped the pool at the droplet count and sampled with replacement, so every pool ≥ K behaved identically (reuse forced even for 100k). Now droplets draw from a pool of exactly the requested size. |
+| **Fix: truncation model** | `truncation`, `fragment_rate`, `fragment_rate_heavy` | v1 cut 0–10% off both ends of *every read*, splintering single molecules under PairPlex's global-alignment clustering (PairPlex's default threshold gave 0 pairs; "more depth → fewer pairs" was an artifact). Default is now `"fragment_5p"`: full-length amplicons (TSO → primer) plus a fraction of 5'-fragmented molecules, per molecule. `"per_read_both"` reproduces v1. |
+| Chain-specific leakage | `release_rate_heavy`, `release_rate_light` | Light chains leak more than heavy in every real reaction. |
+| Light template abundance | `molecules_per_chain_mean_light` | Light libraries ~8× heavy by qPCR. |
+| **Ambient across barcodes** | `ambient_rate` | Pre-RT capture of free mRNA into *other* droplets: copies get a new barcode + UMI and a random well (`is_ambient`, `n_reads_ambient` in truth). Release only moves molecules across wells. |
+| **UMI errors** | `umi_sub_rate` | ~21% of real UMIs are 1-read Hamming-1 neighbours of a deep UMI; uncorrected, they inflate support (this is how `min_cluster_umis=2` passes contaminants in real data). |
+| Leakage-robust recall | `simplex.summarize(..., truth_dir)` → `cell_recall` | Key-level recall needs resident support at home, which collapses at high leakage. |
+
+All v2 knobs default to v1 behaviour except `truncation` (the v1 model was an artifact).
+
+### The calibrated profile
+```python
+import simplex
+reads = simplex.run("pairs.parquet", "sim_out", n_cells=4000, wells=48, seed=0, **simplex.PRINCEPS_2025)
+```
+Values and their sources are documented in `simplex/profiles.py` (λ 2.2; heavy/light leakage
+0.55/0.85; ambient 0.3; 2/4 molecules per heavy/light chain; 8 reads per molecule; per-read errors
+0.8%; UMI errors 0.4%/base; 5'-fragmentation 60% heavy / 30% light). Real wells hold ~10k cells,
+which is not tractable; collisions depend on λ and the number of wells, not on cells per well.
+
+### Ground-truth validation runner
+`diagnosis/simplex_validation.py` runs scenarios (calibrated; clean; no leakage; no ambient;
+leakage 0.5; improved protocol), PairPlex with real defaults and with `min_cluster_umis=2`, and
+the pooled confidence-scored pairing (`pairplex pair-pooled`), and reports precision, cell recall
+and precision by confidence bin.
+
+### Which v1 conclusions do not transfer
+- "`min_cluster_umis ≥ 2` gives 100% precision": an artifact of single-molecule ambient events and
+  no UMI errors. In the calibrated regime it removes nearly all pairs (no UMI errors) or lets
+  contaminants through (with UMI errors).
+- "`clustering_threshold` 0.6–0.7 doubles yield": an artifact of read splintering; on real
+  sequences 0.6 would merge most distinct light chains.
+- Sweeps of `release_rate` 0–0.2: the measured regime is ~0.55 (heavy) to ~0.85 (light).
