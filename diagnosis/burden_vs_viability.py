@@ -3,7 +3,8 @@
 Prediction of the ambient-mRNA hypothesis (satellites.py): free mRNA comes from dead/lysed
 cells, so burden should rise as viability falls. Viability columns are read from the study
 sheet (Sheet1, rows 4-15, one row per donor): PBMC viability (J), naive B viability (M),
-memory B viability (P); naive cells loaded post-fixation (Q). Spearman rho with an exact-ish
+memory B viability (P); naive cells loaded post-fixation (Q); lab user (C) and processing date (E)
+are tested as processing-group effects. Spearman rho with an exact-ish
 permutation p-value (n = 12 donors, so treat as exploratory). Depth (total heavy occurrences)
 and cells loaded are reported as possible confounders.
 
@@ -41,7 +42,7 @@ def main():
     rows = []
     for r in range(4, 16):
         v = lambda c: ws[f"{c}{r}"].value
-        rows.append(dict(donor_n=int(v("B")), donor_id=v("D"), pbmc_viability=v("J"), naive_viability=v("M"),
+        rows.append(dict(donor_n=int(v("B")), donor_id=v("D"), user=v("C"), date=str(v("E"))[:10], pbmc_viability=v("J"), naive_viability=v("M"),
                          memory_viability=v("P"), naive_loaded=v("Q")))
     s = pl.DataFrame(rows, schema_overrides={"naive_loaded": pl.Float64, "pbmc_viability": pl.Float64,
                                              "naive_viability": pl.Float64, "memory_viability": pl.Float64})
@@ -55,6 +56,16 @@ def main():
         for x in ("pbmc_viability", "naive_viability", "naive_loaded", "heavy_occurrences_total"):
             rho, p, n = spearman(d[x].to_numpy(), d[y].to_numpy())
             print(f"  {y:14s} ~ {x:24s} rho={rho:+.2f}  p={p:.3f}  n={n}")
+    print("\nprocessing-group differences (median difference, permutation p; exploratory, uncorrected):")
+    rng = np.random.default_rng(0)
+    for y in ("sat_frac", "occ_frac_ge5", "occ_frac_ge10"):
+        vals, grp = d[y].to_numpy(), d["user"].to_numpy()
+        g0 = grp[0]
+        stat = lambda g: np.median(vals[g == g0]) - np.median(vals[g != g0])
+        obs = stat(grp)
+        null = np.array([stat(rng.permutation(grp)) for _ in range(20000)])
+        print(f"  {y:14s} by lab user ({g0} - other) = {obs:+.3f}  p={(np.abs(null) >= abs(obs) - 1e-12).mean():.3f}")
+    print(d.group_by("date").agg(pl.len(), *[pl.col(y).median() for y in ("sat_frac", "occ_frac_ge5", "occ_frac_ge10")]).sort("date"))
     if a.out:
         d.write_csv(a.out)
 
