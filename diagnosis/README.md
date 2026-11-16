@@ -16,6 +16,8 @@ within modest memory. Inputs are PairPlex per-well outputs (`parsed/VDJ_*.parque
 | `residency_dedup.py` | same, counting each molecule once at its top well → leakage estimate |
 | `across_barcode.py` | chains under far more droplet barcodes than clonality allows (heavy-naive and cross-donor nulls) |
 | `satellites.py` | are multi-barcode copies co-located with the parent cell's home well? (ambient pre-RT vs post-break re-barcoding) |
+| `heavy_burden.py` | per-donor ambient burden from naive heavy chains (no comparator) |
+| `burden_vs_viability.py` | burden vs sample viability across donors (Spearman, permutation p) |
 | `funnel.py` | per-well read/molecule funnel through every PairPlex stage + barcode composition |
 
 Requires `edlib`, `polars`, `pyspoa` (PairPlex deps).
