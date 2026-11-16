@@ -243,30 +243,38 @@ def fig_simplex_v1(R, out):
 
 
 def fig_simplex_v2(R, out):
-    f = R / "simplex_v2" / "simplex_validation.jsonl"
-    if not f.exists():
+    # prefer the corrected-fragment profile (v2c, split in a/ and b/), fall back to v2a
+    files = sorted((R / "simplex_v2c").glob("*/simplex_validation.jsonl")) or [R / "simplex_v2" / "simplex_validation.jsonl"]
+    files = [f for f in files if f.exists()]
+    if not files:
         return print("skip simplex v2")
-    rows = [json.loads(l) for l in open(f) if l.strip()]
+    tag = "v2c" if "simplex_v2c" in str(files[0]) else "v2a"
+    rows = [json.loads(l) for f in files for l in open(f) if l.strip()]
     order = ["clean", "improved_protocol", "no_leakage", "no_ambient", "leak_0.5", "calibrated"]
     rows = sorted([r for r in rows if r["scenario"] in order], key=lambda r: order.index(r["scenario"]))
     if not rows:
         return print("skip simplex v2 (empty)")
-    labels = [r["scenario"].replace("_", " ") for r in rows]
-    series = [("per-well (default)", [r["per_well"]["precision"] or 0 for r in rows]),
-              ("per-well, min UMIs 2", [r["per_well_mcu2"]["precision"] or 0 for r in rows]),
-              ("pooled home-well", [r["pooled"]["precision"] or 0 for r in rows])]
-    fig, ax = plt.subplots(figsize=(10, 4.4))
+    labels = [r["scenario"].replace("_", " ").replace("improved protocol", "improved\nprotocol") for r in rows]
+    meth = [("per-well (default)", "per_well"), ("per-well, min UMIs 2", "per_well_mcu2"), ("pooled home-well", "pooled")]
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.6), sharey=True)
     x = np.arange(len(rows))
-    for i, (lab, v) in enumerate(series):
-        ax.bar(x + (i - 1) * 0.26, v, width=0.24, color=C[i], edgecolor=SURFACE, linewidth=1.5, label=lab)
-        for xi, vi in zip(x, v):
-            ax.text(xi + (i - 1) * 0.26, vi + 0.015, f"{vi:.0%}", ha="center", fontsize=8, color=INK)
-    ax.set_xticks(x, labels)
-    ax.set_ylim(0, 1.1)
-    ax.set_ylabel("precision vs ground truth")
-    ax.legend(ncols=3, loc="upper right")
-    ax.grid(axis="x", visible=False)
-    ax.set_title("SimPlex v2 (ground truth): the measured regime reproduces the real failure")
+    for ax, metric, title in ((axes[0], "precision", "precision (correct / emitted pairs)"),
+                              (axes[1], "cell_recall", "cell recall (correct pairs / cells with both chains)")):
+        for i, (lab, k) in enumerate(meth):
+            v = [r[k][metric] or 0 for r in rows]
+            n = [r[k]["emitted"] for r in rows]
+            ax.bar(x + (i - 1) * 0.26, v, width=0.24, color=C[i], edgecolor=SURFACE, linewidth=1.5, label=lab)
+            for xi, vi, ni in zip(x, v, n):
+                txt = f"{vi:.0%}" + (f"\nn={ni}" if metric == "precision" and ni < 50 else "")
+                ax.text(xi + (i - 1) * 0.26, vi + 0.015, txt, ha="center", fontsize=7, color=INK)
+        ax.set_xticks(x, labels, fontsize=8)
+        ax.set_ylim(0, 1.22)
+        ax.set_yticks(np.linspace(0, 1, 6))
+        ax.grid(axis="x", visible=False)
+        ax.set_title(title, fontsize=10)
+    axes[0].set_ylabel("vs ground truth")
+    axes[0].legend(ncols=3, loc="upper left", bbox_to_anchor=(0, -0.12), fontsize=8, frameon=False)
+    fig.suptitle(f"SimPlex {tag} ground truth (4,000 cells, 48 wells): leakage drives the failure; pooled pairing recovers when leakage is low")
     save(fig, out, "09_simplex_v2_scenarios")
 
 

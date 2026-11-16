@@ -5,6 +5,12 @@ real runs, the simulated per-well 1H+1L rule loses cells for a reason real data 
 
 Usage: python duplicate_contigs.py TAG1 "GLOB1" [TAG2 "GLOB2" ...]   (globs of *_paired/_unpaired.parquet)
 """
+import glob
+import os
+import sys
+
+import polars as pl
+
 def stats(files, tag):
     rows = []
     for f in files:
