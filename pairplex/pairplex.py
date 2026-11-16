@@ -27,7 +27,7 @@ import polars as pl
 from natsort import natsorted
 from tqdm.auto import tqdm
 
-from .utils import parse_barcodes, print_splash, process_droplet
+from .utils import available_cpus, parse_barcodes, print_splash, process_droplet
 
 ######################################################
 ##                Main function                     ##
@@ -208,7 +208,7 @@ def run(
 
     # initialize the Process Pool
     with ProcessPoolExecutor(
-        max_workers=mp.cpu_count(), mp_context=mp.get_context("spawn")
+        max_workers=available_cpus(), mp_context=mp.get_context("spawn")
     ) as executor:
         for input_file in natsorted(input_files):
             to_delete = []
@@ -387,6 +387,7 @@ def run(
             #     annotation
             # --------------------
 
+            pairs_printer = None
             main_pbar.set_postfix_str("annotating sequences", refresh=True)
             # failsafe for empty consensus files
             if consensus_count <= 1 or os.path.getsize(consensus_file) == 0: # Changed consensus_count to include 1 (a single sequence can't be paired)
@@ -457,7 +458,8 @@ def run(
             seqs_printer.close()
             valids_printer.close()
             consensus_printer.close()
-            pairs_printer.close()
+            if pairs_printer is not None:
+                pairs_printer.close()
 
             # update the main progress bar
             main_pbar.update(1)

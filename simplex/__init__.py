@@ -10,5 +10,7 @@ for the full set of generator knobs.
 from .config import SimplexConfig
 from .run import run
 from .scoring import score
+from .metrics import summarize
+from .profiles import PRINCEPS_2025
 
-__all__ = ["SimplexConfig", "run", "score"]
+__all__ = ["SimplexConfig", "run", "score", "summarize", "PRINCEPS_2025"]

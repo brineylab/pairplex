@@ -13,7 +13,8 @@ from ._contract import REF_MIN_READS, REF_MIN_UMIS
 # full aggregate schema so a completely read-less run still yields a valid (empty) component table
 _COMP_AGG_SCHEMA={"final_well":pl.Int64,"barcode":pl.Utf8,"origin_cell_id":pl.Int64,"chain":pl.Int8,
     "source_pair_id":pl.Utf8,"locus":pl.Utf8,"n_reads":pl.Int64,"n_reads_resident":pl.Int64,
-    "n_reads_free":pl.Int64,"n_reads_index_hopped":pl.Int64,"n_umis":pl.Int64,"n_source_molecules":pl.Int64}
+    "n_reads_free":pl.Int64,"n_reads_index_hopped":pl.Int64,"n_umis":pl.Int64,"n_source_molecules":pl.Int64,
+    "n_reads_ambient":pl.Int64}
 
 def _cc_seq(cells):
     """Reshape `cells` (one row per cell, two chain columns) into long form: one row per
@@ -48,7 +49,8 @@ def build_truth_components(cells,reads):
             (~pl.col("is_free")&~pl.col("is_index_hopped")).sum().alias("n_reads_resident"),
             pl.col("is_free").sum().alias("n_reads_free"),pl.col("is_index_hopped").sum().alias("n_reads_index_hopped"),
             pl.col("umi").n_unique().alias("n_umis"),
-            (pl.col("molecule_id").n_unique() if "molecule_id" in reads.columns else pl.col("umi").n_unique()).alias("n_source_molecules")])
+            (pl.col("molecule_id").n_unique() if "molecule_id" in reads.columns else pl.col("umi").n_unique()).alias("n_source_molecules"),
+            (pl.col("is_ambient").sum() if "is_ambient" in reads.columns else pl.lit(0,pl.UInt32)).alias("n_reads_ambient")])
     comp=agg.join(cs.select(["origin_cell_id","chain","sequence","resident_well","home_barcode"]),on=["origin_cell_id","chain"],how="left")
     return comp.with_columns(((pl.col("resident_well")==pl.col("final_well"))&(pl.col("home_barcode")==pl.col("barcode"))).alias("is_resident_source")).drop(["resident_well","home_barcode"])
 

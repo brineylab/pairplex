@@ -27,7 +27,7 @@ import polars as pl
 from natsort import natsorted
 from tqdm.auto import tqdm
 
-from .utils import parse_barcodes, print_splash
+from .utils import available_cpus, parse_barcodes, print_splash
 
 
 def run(
@@ -120,7 +120,7 @@ def run(
     )
 
     with ProcessPoolExecutor(
-        max_workers=mp.cpu_count(), mp_context=mp.get_context("spawn")
+        max_workers=available_cpus(), mp_context=mp.get_context("spawn")
     ) as executor:
         for input_file in natsorted(input_files):
             to_delete = []

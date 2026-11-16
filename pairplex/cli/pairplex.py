@@ -22,6 +22,7 @@ import click
 from ..correct_barcodes import run as run_correct_barcodes
 from ..make_fastq import run as run_make_fastq
 from ..pairplex import run as run_pairplex
+from ..pooled_pairing import run_pooled_pairing
 from ..version import __version__
 
 
@@ -240,3 +241,19 @@ def make_fastq(
         platform=platform,
         debug=debug,
     )
+
+
+@cli.command(name="pair-pooled")
+@click.argument("run_directory", type=click.Path(exists=True))
+@click.option("--output", type=click.Path(), default=None, help="Output parquet (default: RUN_DIRECTORY/pooled/pooled_pairs.parquet)")
+@click.option("--wells", type=str, default=None, help="Well range of one reaction, e.g. 1-96 (default: all wells)")
+@click.option("--leakage", type=float, default=None, help="Pre-split leakage f in [0,1); estimated from the data if omitted")
+@click.option("--min-confidence", type=float, default=0.0, help="Drop pairs below this confidence (default keeps all, scored)")
+def pair_pooled_cmd(run_directory, output, wells, leakage, min_confidence):
+    """Pool a per-well run by droplet barcode and pair H/L by shared home well, with a confidence per pair."""
+    rng = tuple(int(x) for x in wells.split("-")) if wells else None
+    pairs, info = run_pooled_pairing(run_directory, output, rng, leakage, min_confidence)
+    print(f"wells={info['wells']} leakage={info['leakage']:.3f} ({'estimated' if info['leakage_estimated'] else 'given'}) "
+          f"species={info['species']} pairs={info['pairs']} -> {info['output']}")
+    for t in (0.5, 0.9):
+        print(f"  pairs with confidence >= {t}: {int((pairs['confidence'] >= t).sum())}")

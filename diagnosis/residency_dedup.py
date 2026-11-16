@@ -11,11 +11,29 @@ Usage: python residency_dedup.py PARSED_DIR OUT.parquet --wells 1-96 [--sample-m
 """
 import argparse
 import glob
+import json
 import os
 import re
 
 import edlib
 import polars as pl
+
+
+# RC of the gene-specific PCR2 primers (lab protocol 250909); found at the 3' end of merged reads
+PROBES = {"H": ["GAGTGCATCCGCCCCAAC", "CCACCAAGGGCCCATC", "CGACCAGCCCCAAGGTCTTC", "ATCCGGAGCCTTGGTGGG"],
+          "K": ["GAACTGTGGCTGCACCATCT"], "L": ["GTCACTCTGTTCCCGCCCTC"]}
+
+
+def chain_class(seq, tail=50, k=2):
+    """H/K/L from the 3'-end primer, tolerating <= k edits (R2 starts are error-prone)."""
+    t = seq[-tail:]
+    best, best_d = "unk", k + 1
+    for c, ps in PROBES.items():
+        for p in ps:
+            d = edlib.align(p, t, mode="HW", task="distance", k=k)["editDistance"]
+            if 0 <= d < best_d:
+                best, best_d = c, d
+    return best
 
 
 def hw_identity(a, b):
@@ -33,6 +51,8 @@ def main():
     ap.add_argument("--sample-mod", type=int, default=400)
     ap.add_argument("--species-id", type=float, default=0.94)
     ap.add_argument("--min-len", type=int, default=200)
+    ap.add_argument("--label", default="")
+    ap.add_argument("--json-out", default=None)
     a = ap.parse_args()
     lo, hi = map(int, a.wells.split("-"))
     frames = []
@@ -59,18 +79,22 @@ def main():
     for (bc,), g in mol.sort("reads", descending=True).group_by("barcode", maintain_order=True):
         reps, members = [], []
         for well, seq in g.select("well", "sequence").iter_rows():
+            c = chain_class(seq)
             for i, r in enumerate(reps):
                 if hw_identity(seq, r) >= a.species_id:
-                    members[i].append(well)
+                    members[i].append((well, c))
                     break
             else:
                 reps.append(seq)
-                members.append([well])
+                members.append([(well, c)])
         for m in members:
-            counts = {}
-            for w in m:
+            counts, cls = {}, {}
+            for w, c in m:
                 counts[w] = counts.get(w, 0) + 1
-            rows.append(dict(barcode=bc, umis=len(m), n_wells=len(counts), modal=max(counts.values())))
+                cls[c] = cls.get(c, 0) + 1
+            known = {c: n for c, n in cls.items() if c != "unk"}
+            chain = max(known, key=known.get) if known else "unk"
+            rows.append(dict(barcode=bc, umis=len(m), n_wells=len(counts), modal=max(counts.values()), chain=chain))
     r = pl.DataFrame(rows)
     r.write_parquet(a.out)
     summ = (r.with_columns(pl.col("umis").cut([1, 2, 3, 5, 10, 20], labels=["1", "2", "3", "4-5", "6-10", "11-20", ">20"]).alias("umi_bin"))
@@ -85,6 +109,17 @@ def main():
     if big.height:
         out = 1 - big["modal"].sum() / big["umis"].sum()
         print(f">=6 distinct UMIs: outside-modal {out:.3f} -> implied displacement f ~= {out / (1 - 1 / W):.3f} (W={W})")
+    res = {"label": a.label, "wells": a.wells, "W": W, "molecules": mol.height, "species": r.height}
+    for name, sub in [("all", r)] + [(c, r.filter(pl.col("chain") == c)) for c in ("H", "K", "L", "unk")]:
+        b6 = sub.filter(pl.col("umis") >= 6)
+        b3 = sub.filter(pl.col("umis") >= 3)
+        res[f"n6_{name}"] = b6.height
+        res[f"f6_{name}"] = (float((1 - b6["modal"].sum() / b6["umis"].sum()) / (1 - 1 / W)) if b6.height else None)
+        res[f"f3_{name}"] = (float((1 - b3["modal"].sum() / b3["umis"].sum()) / (1 - 1 / W)) if b3.height else None)
+    print(json.dumps(res))
+    if a.json_out:
+        with open(a.json_out, "a") as fh:
+            fh.write(json.dumps(res) + "\n")
 
 
 if __name__ == "__main__":

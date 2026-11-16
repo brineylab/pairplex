@@ -43,7 +43,15 @@ class SimplexConfig:
       `umi_length`/`tso` must match the values `pairplex.parse_barcodes` assumes;
       `chemistry` selects the 10X barcode whitelist; `output_mode` is `"merged"`-only
       in Phase 1-2; `rc_fraction` is the fraction of reads emitted reverse-complemented;
-      `variable_length` truncates cDNA ends to mimic variable read/insert length.
+      `variable_length` enables truncation; `truncation` picks the model (`"fragment_5p"`: a fraction
+      `fragment_rate` / `fragment_rate_heavy` of molecules lose their 5' part — fragmented RNA, TSO at
+      the break — the rest are full-length amplicons; `"molecule_3p"`: one 3' cut per molecule;
+      `"per_read_both"`: legacy v1 per-read cuts at both ends, which splinters molecules).
+    - **v2 biology knobs** (measured on real PairPlex data, see diagnosis/): `release_rate_heavy` /
+      `release_rate_light` override `release_rate` per chain (pre-split leakage differs by chain);
+      `molecules_per_chain_mean_light` overrides the light-chain molecule count (light template is
+      more abundant); `ambient_rate` adds pre-RT ambient capture: free mRNA from lysed cells barcoded
+      in OTHER droplets (new barcode + UMI, random well), as `ambient_rate` x cell molecules.
     - **Bookkeeping**: `write_read_truth` (also persist a per-read truth parquet —
       expensive, off by default), `seed` (root seed for all per-stage RNG streams).
     """
@@ -59,6 +67,11 @@ class SimplexConfig:
     barcode_length: int = BARCODE_LEN; umi_length: int = UMI_LEN; tso: str = "TTTCTTATATGGG"; chemistry: str = "v2"
     output_mode: str = "merged"; rc_fraction: float = 0.0
     variable_length: bool = True; write_read_truth: bool = False; seed: int = 0
+    # v2 knobs (defaults reproduce v1 behaviour except truncation, whose v1 model was an artifact)
+    release_rate_heavy: float | None = None; release_rate_light: float | None = None
+    molecules_per_chain_mean_light: float | None = None
+    ambient_rate: float = 0.0
+    truncation: str = "fragment_5p"; fragment_rate: float = 0.1; fragment_rate_heavy: float | None = None
 
     _RATES=("recovery_rate","release_rate","molecule_survival_rate","rt_sub_rate","rt_indel_rate",
             "sequencing_sub_rate","sequencing_indel_rate","index_hop_rate","rc_fraction")
@@ -75,7 +88,8 @@ class SimplexConfig:
         molecules/chain x survival x depth). Deliberately omits `release_rate`, since
         release redistributes existing molecules rather than adding new ones.
         """
-        return int(n*2*self.recovery_rate*self.molecules_per_chain_mean*self.molecule_survival_rate*self.reads_per_molecule_mean)
+        ml=self.molecules_per_chain_mean if self.molecules_per_chain_mean_light is None else self.molecules_per_chain_mean_light
+        return int(n*self.recovery_rate*(self.molecules_per_chain_mean+ml)*(1+self.ambient_rate)*self.molecule_survival_rate*self.reads_per_molecule_mean)
     def validate(self, actual_n_cells=None, max_reads=3_000_000_000):
         """Enforce config invariants; raises `ValueError` on the first violation, else returns `self`.
 
@@ -100,6 +114,16 @@ class SimplexConfig:
             raise ValueError(f"Phase 1-2 fixes barcode_length={BARCODE_LEN}, umi_length={UMI_LEN}")
         if self.tso!=_TSO: raise ValueError(f"Phase 1-2 fixes tso={_TSO!r} (parser assumes it)")
         if self.wells==1 and self.index_hop_rate!=0: raise ValueError("index_hop_rate must be 0 when wells==1")
+        for r in ("release_rate_heavy","release_rate_light"):
+            v=getattr(self,r)
+            if v is not None and not (0.0<=v<=1.0): raise ValueError(f"{r}={v} not in [0,1]")
+        if self.molecules_per_chain_mean_light is not None and self.molecules_per_chain_mean_light<=0:
+            raise ValueError("molecules_per_chain_mean_light must be > 0 or None")
+        if self.ambient_rate<0: raise ValueError("ambient_rate must be >= 0")
+        for r in ("fragment_rate","fragment_rate_heavy"):
+            v=getattr(self,r)
+            if v is not None and not (0.0<=v<=1.0): raise ValueError(f"{r}={v} not in [0,1]")
+        if self.truncation not in ("fragment_5p","molecule_3p","per_read_both"): raise ValueError(f"unknown truncation {self.truncation!r}")
         n=actual_n_cells if actual_n_cells is not None else self.n_cells
         if n and self.estimated_reads(n)>max_reads: raise ValueError(f"est reads {self.estimated_reads(n)}>budget {max_reads}")
         return self

@@ -65,7 +65,10 @@ def assign_droplets_and_barcodes(cells, mean, overdispersion, chemistry, barcode
         droplet=rng.integers(0,K,size=n).astype(np.int64)
     brng=rng_for(seed,"barcodes")
     if barcode_pool_size:
-        pool=np.array(load_barcodes(chemistry,min(barcode_pool_size,K),brng)); bc=pool[brng.integers(0,len(pool),size=K)]
+        # droplets draw gel-bead barcodes with replacement from a pool of exactly `barcode_pool_size`
+        # (birthday-style reuse ~ K/pool). Earlier versions capped the pool at K, which made every
+        # pool >= K behave identically and forced heavy reuse even for huge pools.
+        pool=np.array(load_barcodes(chemistry,barcode_pool_size,brng)); bc=pool[brng.integers(0,len(pool),size=K)]
     else:
         bc=np.array(load_barcodes(chemistry,K,brng))
     return cells.with_columns([pl.Series("droplet_id",droplet),pl.Series("barcode",bc[droplet])])

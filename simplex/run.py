@@ -48,6 +48,13 @@ def run(
     variable_length: bool = True,
     write_read_truth: bool = False,
     seed: int = 0,
+    release_rate_heavy: float | None = None,
+    release_rate_light: float | None = None,
+    molecules_per_chain_mean_light: float | None = None,
+    ambient_rate: float = 0.0,
+    truncation: str = "fragment_5p",
+    fragment_rate: float = 0.1,
+    fragment_rate_heavy: float | None = None,
     quiet: bool = False,
     verbose: bool = False,
 ) -> "Path":
@@ -132,6 +139,21 @@ def run(
     seed : int, default 0
         Root seed; all per-stage RNG derives from it. Same seed + same input + same layout
         reproduces identical output.
+    release_rate_heavy, release_rate_light : float | None, default None
+        Per-chain override of ``release_rate`` (IGH vs IGK/IGL). Real data: light chains leak more.
+    molecules_per_chain_mean_light : float | None, default None
+        Light-chain override of ``molecules_per_chain_mean`` (light template is more abundant).
+    ambient_rate : float, default 0.0
+        Pre-RT ambient capture: ``Poisson(ambient_rate x cell molecules)`` extra molecules copying a
+        random cell molecule's chain into a random droplet's barcode with a fresh UMI, routed to a
+        random well. Moves chains ACROSS barcodes (release only moves them across wells).
+    truncation : str, default "fragment_5p"
+        ``"fragment_5p"``: full-length amplicons except a fraction of 5'-fragmented molecules
+        (fragmented RNA). ``"molecule_3p"``: one 3' cut per molecule. ``"per_read_both"``: legacy v1
+        per-read cuts at both ends (splinters molecules; reproduction only).
+    fragment_rate, fragment_rate_heavy : float, float | None
+        Fraction of molecules that are 5'-fragmented (``fragment_rate_heavy`` overrides for IGH;
+        real heavy chains are fragmented far more often than light chains).
     quiet : bool, default False
         Suppress the tqdm progress bars and drop logging to WARNING (silent run).
     verbose : bool, default False
@@ -169,8 +191,11 @@ def run(
     logger.info("[2/9] assigned %d droplets/barcodes (lambda=%.2f)", cells["droplet_id"].n_unique(), cfg.cells_per_droplet_mean); bar.update(1)
     cells=assign_wells(cells, cfg.wells, cfg.seed)
     logger.info("[3/9] assigned cells to %d wells", cfg.wells); bar.update(1)
-    mols, chain_status=generate_molecules(cells, cfg.recovery_rate, cfg.molecules_per_chain_mean, cfg.release_rate, cfg.umi_length, cfg.rt_sub_rate, cfg.rt_indel_rate, cfg.seed)
-    logger.info("[4/9] generated %d molecules (%d free)", mols.height, int(mols["is_free"].sum()) if mols.height else 0); bar.update(1)
+    mols, chain_status=generate_molecules(cells, cfg.recovery_rate, cfg.molecules_per_chain_mean, cfg.release_rate, cfg.umi_length, cfg.rt_sub_rate, cfg.rt_indel_rate, cfg.seed,
+        release_rate_heavy=cfg.release_rate_heavy, release_rate_light=cfg.release_rate_light,
+        molecules_per_chain_mean_light=cfg.molecules_per_chain_mean_light, ambient_rate=cfg.ambient_rate)
+    logger.info("[4/9] generated %d molecules (%d free, %d ambient)", mols.height, int(mols["is_free"].sum()) if mols.height else 0,
+                int(mols["is_ambient"].sum()) if mols.height else 0); bar.update(1)
     mols, reads=route_and_amplify(mols, cfg.wells, cfg.molecule_survival_rate, cfg.reads_per_molecule_mean, cfg.index_hop_rate, cfg.seed)
     logger.info("[5/9] amplified to %d reads (%d molecules survived)", reads.height, int(mols["survived"].sum()) if mols.height else 0); bar.update(1)
     reads=apply_sequencing_errors(reads, cfg.sequencing_sub_rate, cfg.sequencing_indel_rate, cfg.seed)
@@ -179,7 +204,7 @@ def run(
     tcells=build_truth_cells(cells, chain_status, mols, reads)
     tbar=build_truth_barcodes(cells, tcells, comp)
     logger.info("[7/9] built truth: %d components, %d (well,barcode) keys", comp.height, tbar.height); bar.update(1)
-    built=build_merged(reads, cfg.tso, cfg.rc_fraction, cfg.variable_length, cfg.seed)
+    built=build_merged(reads, cfg.tso, cfg.rc_fraction, cfg.variable_length, cfg.seed, truncation=cfg.truncation, fragment_rate=cfg.fragment_rate, fragment_rate_heavy=cfg.fragment_rate_heavy)
     logger.info("[8/9] assembled %d merged reads", built.height); bar.update(1)
     reads_paths=write_merged_fastq(built, out, show_progress=not quiet)
     write_truth(out, comp, tcells, tbar, reads if cfg.write_read_truth else None)

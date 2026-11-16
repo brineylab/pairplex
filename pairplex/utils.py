@@ -32,6 +32,35 @@ from spoa import poa
 from .version import __version__
 
 BARCODE_DIR = Path(__file__).resolve().parent / "barcodes"
+
+
+def available_cpus() -> int:
+    """
+    Number of worker processes PairPlex should use.
+
+    ``multiprocessing.cpu_count()`` reports the HOST's cores, which oversubscribes (and can OOM)
+    inside containers and cgroup-limited pods. Resolution order: the ``PAIRPLEX_MAX_WORKERS``
+    environment variable; the cgroup v2 CPU quota (``/sys/fs/cgroup/cpu.max``, quota / period);
+    the process CPU affinity; finally ``os.cpu_count()``. Always >= 1.
+    """
+    import os
+
+    env = os.environ.get("PAIRPLEX_MAX_WORKERS")
+    if env:
+        try:
+            return max(1, int(env))
+        except ValueError:
+            pass
+    try:
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()[:2]
+        if quota != "max":
+            return max(1, int(float(quota) / float(period)))
+    except (OSError, ValueError):
+        pass
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        return max(1, os.cpu_count() or 1)
 DEFAULT_WHITELIST = BARCODE_DIR / "737K-august-2016.txt"
 
 

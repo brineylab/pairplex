@@ -11,7 +11,7 @@ import numpy as np, polars as pl
 from ._rng import rng_for
 _READS_SCHEMA={"read_id":pl.Utf8,"molecule_id":pl.Int64,"origin_cell_id":pl.Int64,"source_pair_id":pl.Utf8,
     "chain":pl.Int8,"locus":pl.Utf8,"umi":pl.Utf8,"barcode":pl.Utf8,"amplification_well":pl.Int64,
-    "final_well":pl.Int64,"is_free":pl.Boolean,"is_index_hopped":pl.Boolean,"cdna":pl.Utf8,"n_seq_errors":pl.Int64}
+    "final_well":pl.Int64,"is_free":pl.Boolean,"is_index_hopped":pl.Boolean,"cdna":pl.Utf8,"n_seq_errors":pl.Int64,"is_ambient":pl.Boolean}
 def route_and_amplify(molecules,wells,molecule_survival_rate,reads_per_molecule_mean,index_hop_rate,seed):
     """Route molecules to an amplification well, apply survival, then amplify into reads with index hopping.
 
@@ -31,6 +31,8 @@ def route_and_amplify(molecules,wells,molecule_survival_rate,reads_per_molecule_
     Returns `(molecules, reads)`: `molecules` is the input frame with `amplification_well`
     and `survived` filled in; `reads` is the per-read record used by `reads.py`/`truth.py`.
     """
+    if "is_ambient" not in molecules.columns:
+        molecules=molecules.with_columns(pl.lit(False).alias("is_ambient"))
     rng=rng_for(seed,"routing"); n=molecules.height
     free=molecules["is_free"].to_numpy() if n else np.array([],bool)
     amp=(np.where(free,rng.integers(0,wells,size=n),molecules["resident_well"].to_numpy()).astype(np.int64) if n else np.array([],np.int64))
