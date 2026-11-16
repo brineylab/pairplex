@@ -1,0 +1,18 @@
+# diagnosis/
+
+Real-data diagnostics for PairPlex mispairing (UDA-seq style split-emulsion libraries).
+Each script is standalone, single-process, and samples droplet barcodes by hash so it stays
+within modest memory. Inputs are PairPlex per-well outputs (`parsed/VDJ_*.parquet`,
+`metadata/VDJ_*.csv`). Results and the findings log live outside the repo
+(`~/work/PairPlex/diagnosis/`).
+
+| script | question |
+|---|---|
+| `noise_control.py` | identity between reads of the same molecule (noise floor) |
+| `cluster_purity.py` | does PairPlex's greedy clustering merge distinct molecule species? (null-calibrated) |
+| `umi_chimera.py` | do barcode+UMI families contain a second V(D)J (PCR chimeras)? |
+| `umi_cross_well.py` | same molecule in several wells (post-pool swapping / index hopping) |
+| `residency.py` | cross-well spread of a chain's molecules from per-well contig UMI counts (inflated by swaps) |
+| `residency_dedup.py` | same, counting each molecule once at its top well → leakage estimate |
+
+Requires `edlib`, `polars`, `pyspoa` (PairPlex deps).
