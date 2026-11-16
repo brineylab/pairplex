@@ -31,6 +31,14 @@ plt.rcParams.update({
 
 
 def save(fig, out, name):
+    import textwrap
+    if len(fig.axes) == 1:  # move the axis title to a wrapped, figure-level, left-aligned title
+        ax = fig.axes[0]
+        t = ax.get_title(loc="left")
+        if t:
+            ax.set_title("", loc="left")
+            fig.suptitle("\n".join(textwrap.wrap(t.replace("\n", " "), 70)), x=0.01, ha="left",
+                         fontweight="bold", fontsize=13)
     fig.tight_layout()
     p = out / f"{name}.png"
     fig.savefig(p, dpi=200)
@@ -148,6 +156,25 @@ def fig_across_barcode(R, out):
     save(fig, out, "04_across_barcode")
 
 
+def fig_presplit(out):
+    fig, ax = plt.subplots(figsize=(8.5, 3.8))
+    groups = ["same molecule seen in\nanother well (post-pool)", "distinct molecules of a chain\nin another well (leakage)"]
+    obs, exp = [0.597, 0.242], [0.307, 0.240]
+    y = np.arange(2)[::-1]
+    ax.barh(y + 0.17, obs, height=0.32, color=C[0], edgecolor=SURFACE, linewidth=2, label="observed")
+    ax.barh(y - 0.17, exp, height=0.32, color=C[1], edgecolor=SURFACE, linewidth=2, label="expected if uniform over wells")
+    for yi, o, e in zip(y, obs, exp):
+        ax.text(o, yi + 0.17, f" {o:.0%}", va="center", fontsize=10, color=INK)
+        ax.text(e, yi - 0.17, f" {e:.0%}", va="center", fontsize=10, color=INK)
+    ax.set_yticks(y, groups)
+    ax.set_xlim(0, 0.75)
+    ax.set_xlabel("share landing in the main well's i7 pool of 24")
+    ax.legend(loc="lower right")
+    ax.grid(axis="y", visible=False)
+    ax.set_title("Leaked molecules ignore pool boundaries: displacement happens before the split")
+    save(fig, out, "11_presplit")
+
+
 def fig_identity(out):
     # distributions measured in-session (cluster_purity / noise_control): summary quantiles
     fig, ax = plt.subplots(figsize=(8, 3.8))
@@ -258,7 +285,7 @@ def fig_burden(R, out):
     ax.set_xticks(x, [str(n) for n in d["donor_n"]])
     ax.set_ylim(-0.03, max(d["occ_frac_ge10"]) * 1.2)
     ax.set_xlabel("donor (PBMC viability shown below)")
-    ax.set_ylabel("heavy occurrences under ≥10 barcodes")
+    ax.set_ylabel("share under ≥10 barcodes")
     ax.grid(axis="x", visible=False)
     ax.set_title("Ambient burden varies 60× between donors and does not track viability")
     save(fig, out, "10_burden_by_donor")
@@ -279,6 +306,7 @@ def main():
             print(f"FAILED {fn.__name__}: {e}")
     fig_satellites(out)
     fig_identity(out)
+    fig_presplit(out)
 
 
 if __name__ == "__main__":
