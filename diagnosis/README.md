@@ -20,6 +20,8 @@ within modest memory. Inputs are PairPlex per-well outputs (`parsed/VDJ_*.parque
 | `burden_vs_viability.py` | burden vs sample viability across donors (Spearman, permutation p) |
 | `homewell_pairing.py` | prototype: pool by barcode, home-well posterior, pair by shared home well; clonal-purity validation |
 | `umi_integrity.py` | molecule splitting by greedy clustering + UMI error signature (Hamming-1 excess) |
+| `duplicate_contigs.py` | same-CDR3 duplicate contigs per barcode-well, real vs SimPlex (realism check for the fragment model) |
+| `simplex_drop_reasons.py` | ground-truth reasons per-well PairPlex drops simulated cells (collision / true extra chain / lost / spurious contig) |
 | `summarize_leakage.py` | leakage by chain across reactions; light vs heavy; vs ambient burden |
 | `figures.py` | static PNG figures for the deck from results/ |
 | `funnel.py` | per-well read/molecule funnel through every PairPlex stage + barcode composition |
