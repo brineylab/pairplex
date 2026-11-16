@@ -19,6 +19,10 @@ fits — sweep around them.
   random rate) -> umi_sub_rate 0.004 per base per read  [umi_integrity.py]
 - fragmented RNA: real heavy reads are mostly short 5'-truncated fragments (constant region, no V
   start; 75% of reads lost at annotation are heavy) -> fragment_rate_heavy 0.6, light 0.3  [funnel.py]
+- fragments are mostly C-region +/- J (lost heavy contigs median 108 nt, 79% without CDR3) and
+  rarely become annotated contigs: same-CDR3 duplicate contigs in 1.5-3.1% of real barcode-wells
+  with H and L, at full length -> fragment_keep (0.05, 0.35) of the V(D)J (v2b's 0.3-0.9 gave
+  63% in the clean scenario, half-length)
 
 Scale knobs (`n_cells`, `wells`) are left to the caller: real wells hold ~10k cells, which is not
 tractable; collisions depend on lambda and wells, not on cells per well.
@@ -40,6 +44,7 @@ PRINCEPS_2025 = dict(
     truncation="fragment_5p",
     fragment_rate=0.3,
     fragment_rate_heavy=0.6,
+    fragment_keep=(0.05, 0.35),
     umi_sub_rate=0.004,
 )
 

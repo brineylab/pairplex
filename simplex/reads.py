@@ -21,7 +21,7 @@ def apply_sequencing_errors(reads,sub_rate,indel_rate,seed):
     if reads.height==0 or (sub_rate==0 and indel_rate==0): return reads
     cdna,ne=mutate_strings(list(reads["cdna"]),sub_rate,indel_rate,rng_for(seed,"seqerr"))
     return reads.with_columns([pl.Series("cdna",cdna),(pl.col("n_seq_errors")+pl.Series(ne)).alias("n_seq_errors")])
-def build_merged(reads,tso,rc_fraction,variable_length,seed,truncation="fragment_5p",fragment_rate=0.1,fragment_rate_heavy=None):
+def build_merged(reads,tso,rc_fraction,variable_length,seed,truncation="fragment_5p",fragment_rate=0.1,fragment_rate_heavy=None,fragment_keep=(0.3,0.9)):
     """Assemble each read into the merged layout `barcode(16)+umi(10)+TSO+cDNA` (Phase 1-2
     `output_mode="merged"`), matching what `pairplex.parse_barcodes` expects.
 
@@ -31,7 +31,11 @@ def build_merged(reads,tso,rc_fraction,variable_length,seed,truncation="fragment
     - `"fragment_5p"` (default): intact amplicons run TSO -> gene-specific primer, so they all have
       full length; a fraction `fragment_rate` of molecules (`fragment_rate_heavy` for IGH, if given)
       come from fragmented RNA: template switching happened at the break, so the read keeps a random
-      3' suffix (30-90% of the length) and loses the 5' part (as real truncated heavy chains do).
+      3' suffix (a fraction drawn uniformly in `fragment_keep`, default 30-90% of the length) and
+      loses the 5' part (as real truncated heavy chains do). Input chains are V(D)J only (no
+      constant region), so a long kept fraction still carries CDR3 + part of V and is annotated as
+      an extra contig; real fragments are mostly C-region +/- J and fail annotation (PRINCEPS_2025
+      uses 0.05-0.35).
     - `"molecule_3p"`: one 3' cut (0-30%) per molecule, 5' kept (other chemistries / ablations).
     - `"per_read_both"`: legacy v1 (independent 0-10% cuts at both ends of every read); splinters
       single molecules under PairPlex's global-alignment clustering. Reproduction only. A `rc_fraction` fraction of reads
@@ -55,7 +59,8 @@ def build_merged(reads,tso,rc_fraction,variable_length,seed,truncation="fragment
         mk=r.select("barcode","umi","locus" if "locus" in r.columns else pl.lit("NA").alias("locus")).unique(subset=["barcode","umi"],maintain_order=True)
         rate=np.where(mk["locus"].to_numpy()=="IGH", fragment_rate if fragment_rate_heavy is None else fragment_rate_heavy, fragment_rate)
         frag=rng.random(mk.height)<rate
-        keep=np.where(frag,0.3+0.6*rng.random(mk.height),1.0)
+        lo,hi=fragment_keep
+        keep=np.where(frag,lo+(hi-lo)*rng.random(mk.height),1.0)
         mk=mk.select("barcode","umi").with_columns(pl.Series("_keep",keep))
         r=(r.join(mk,on=["barcode","umi"],how="left")
              .with_columns(pl.max_horizontal(pl.lit(1),(pl.col("cdna").str.len_chars()*pl.col("_keep")).floor().cast(pl.Int64)).alias("_nl"))

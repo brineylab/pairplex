@@ -120,3 +120,17 @@ def test_umi_errors_inflate_umi_strings_not_molecules():
     infl = noisy.select("barcode", "umi").unique().height / noisy["molecule_id"].n_unique()
     assert 1.3 < infl < 2.2                          # ~8 reads x 10 bases x 1% -> many error UMIs
     assert noisy["molecule_id"].n_unique() == clean["molecule_id"].n_unique()
+
+
+def test_fragment_keep_controls_fragment_length():
+    r = _reads(200, 3)
+    b = build_merged(r, "TTTCTTATATGGG", 0.0, True, 0, fragment_rate=1.0, fragment_keep=(0.05, 0.35))
+    cdna_len = (b["read_seq"].str.len_chars() - 39).to_numpy()
+    assert cdna_len.max() <= 0.35 * 400 + 1 and cdna_len.min() >= 0.05 * 400 - 1
+
+
+def test_fragment_keep_validated():
+    import pytest
+    from simplex.config import SimplexConfig
+    with pytest.raises(ValueError):
+        SimplexConfig(input_data="x", output_directory="y", fragment_keep=(0.5, 0.2)).validate()

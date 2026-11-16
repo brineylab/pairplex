@@ -55,6 +55,7 @@ def run(
     truncation: str = "fragment_5p",
     fragment_rate: float = 0.1,
     fragment_rate_heavy: float | None = None,
+    fragment_keep: tuple = (0.3, 0.9),
     umi_sub_rate: float = 0.0,
     quiet: bool = False,
     verbose: bool = False,
@@ -155,6 +156,9 @@ def run(
     fragment_rate, fragment_rate_heavy : float, float | None
         Fraction of molecules that are 5'-fragmented (``fragment_rate_heavy`` overrides for IGH;
         real heavy chains are fragmented far more often than light chains).
+    fragment_keep : (float, float), default (0.3, 0.9)
+        Range of the kept 3' fraction of a fragmented molecule. Short values make fragments
+        unannotatable (lost at abstar) as in real data; long values create extra same-CDR3 contigs.
     umi_sub_rate : float, default 0.0
         Per-base substitution rate in each read's UMI (PCR/sequencing). Error UMIs inflate UMI
         counts for the same molecule, as in uncorrected real data.
@@ -209,7 +213,7 @@ def run(
     tcells=build_truth_cells(cells, chain_status, mols, reads)
     tbar=build_truth_barcodes(cells, tcells, comp)
     logger.info("[7/9] built truth: %d components, %d (well,barcode) keys", comp.height, tbar.height); bar.update(1)
-    built=build_merged(reads, cfg.tso, cfg.rc_fraction, cfg.variable_length, cfg.seed, truncation=cfg.truncation, fragment_rate=cfg.fragment_rate, fragment_rate_heavy=cfg.fragment_rate_heavy)
+    built=build_merged(reads, cfg.tso, cfg.rc_fraction, cfg.variable_length, cfg.seed, truncation=cfg.truncation, fragment_rate=cfg.fragment_rate, fragment_rate_heavy=cfg.fragment_rate_heavy, fragment_keep=tuple(cfg.fragment_keep))
     logger.info("[8/9] assembled %d merged reads", built.height); bar.update(1)
     reads_paths=write_merged_fastq(built, out, show_progress=not quiet)
     write_truth(out, comp, tcells, tbar, reads if cfg.write_read_truth else None)

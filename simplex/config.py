@@ -45,7 +45,7 @@ class SimplexConfig:
       in Phase 1-2; `rc_fraction` is the fraction of reads emitted reverse-complemented;
       `variable_length` enables truncation; `truncation` picks the model (`"fragment_5p"`: a fraction
       `fragment_rate` / `fragment_rate_heavy` of molecules lose their 5' part — fragmented RNA, TSO at
-      the break — the rest are full-length amplicons; `"molecule_3p"`: one 3' cut per molecule;
+      the break — the rest are full-length amplicons; `fragment_keep` = (min, max) kept 3' fraction; `"molecule_3p"`: one 3' cut per molecule;
       `"per_read_both"`: legacy v1 per-read cuts at both ends, which splinters molecules).
     - **v2 biology knobs** (measured on real PairPlex data, see diagnosis/): `release_rate_heavy` /
       `release_rate_light` override `release_rate` per chain (pre-split leakage differs by chain);
@@ -73,6 +73,7 @@ class SimplexConfig:
     molecules_per_chain_mean_light: float | None = None
     ambient_rate: float = 0.0
     truncation: str = "fragment_5p"; fragment_rate: float = 0.1; fragment_rate_heavy: float | None = None
+    fragment_keep: tuple = (0.3, 0.9)
     umi_sub_rate: float = 0.0
 
     _RATES=("recovery_rate","release_rate","molecule_survival_rate","rt_sub_rate","rt_indel_rate",
@@ -125,6 +126,8 @@ class SimplexConfig:
         for r in ("fragment_rate","fragment_rate_heavy"):
             v=getattr(self,r)
             if v is not None and not (0.0<=v<=1.0): raise ValueError(f"{r}={v} not in [0,1]")
+        lo,hi=self.fragment_keep
+        if not (0.0<lo<=hi<=1.0): raise ValueError(f"fragment_keep={self.fragment_keep} must satisfy 0<min<=max<=1")
         if self.truncation not in ("fragment_5p","molecule_3p","per_read_both"): raise ValueError(f"unknown truncation {self.truncation!r}")
         n=actual_n_cells if actual_n_cells is not None else self.n_cells
         if n and self.estimated_reads(n)>max_reads: raise ValueError(f"est reads {self.estimated_reads(n)}>budget {max_reads}")
