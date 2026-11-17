@@ -99,6 +99,12 @@ def version():
     help="Germline database for V(D)J assignment",
 )
 @click.option(
+    "--mmseqs_threads",
+    type=click.IntRange(min=1),
+    default=1,
+    help="Threads for MMseqs2 during annotation (always explicit; None made MMseqs2 use every node CPU and crash)",
+)
+@click.option(
     "--tso_g_max",
     type=click.IntRange(min=0),
     default=3,
@@ -129,6 +135,7 @@ def run(
     merge_paired_reads: bool,
     receptor: str,
     germline_database: str,
+    mmseqs_threads: int,
     tso_g_max: int,
     legacy: bool,
     quiet: bool,
@@ -148,6 +155,7 @@ def run(
         merge_paired_reads=merge_paired_reads,
         receptor=receptor,
         germline_database=germline_database,
+        mmseqs_threads=mmseqs_threads,
         tso_g_max=tso_g_max,
         legacy=legacy,
         quiet=quiet,
@@ -250,7 +258,7 @@ def make_fastq(
     debug: bool,
 ):
     run_make_fastq(
-        sequencing_folder=sequencing_folder,
+        sequence_dir=sequencing_folder,
         output_directory=output_directory,
         samplesheet=samplesheet,
         platform=platform,
