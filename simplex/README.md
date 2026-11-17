@@ -10,7 +10,7 @@ it sits beside it (`import simplex`).
 
 ---
 
-> **v2 (calibrated).** A diagnosis of real PairPlex data (`../diagnosis/`) measured the regime
+> **v2 (calibrated).** A diagnosis of real PairPlex data (analysis scripts kept outside this repo's main branch) measured the regime
 > SimPlex must reproduce: barcoded cDNA leaks out of fixed cells before the well split (heavy ≈ 0.55,
 > light ≈ 0.85 of molecules end up in other wells), ambient mRNA is copied into other droplets
 > before RT, most chains carry 1–2 molecules, ~1/5 of UMIs are sequencing errors, and heavy chains
@@ -440,7 +440,7 @@ Values and their sources are documented in `simplex/profiles.py` (λ 2.2; heavy/
 which is not tractable; collisions depend on λ and the number of wells, not on cells per well.
 
 ### Ground-truth validation runner
-`diagnosis/simplex_validation.py` runs scenarios (calibrated; clean; no leakage; no ambient;
+A validation runner (kept with the diagnosis scripts, outside the package) runs scenarios (calibrated; clean; no leakage; no ambient;
 leakage 0.5; improved protocol), PairPlex with real defaults and with `min_cluster_umis=2`, and
 the pooled confidence-scored pairing (`pairplex pair-pooled`), and reports precision, cell recall
 and precision by confidence bin.
