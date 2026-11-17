@@ -31,6 +31,20 @@ SIZES = (3, 5, 10)
 COLS = {"barcode": None, "v_gene:0": None, "j_gene:0": None, "cdr3_aa:0": None, "v_gene:1": None, "locus:0": None}
 
 
+def readable_pairs(files, cols):
+    """Paired files that actually hold rows with ``cols``. Wells without pairs can write column-less or
+    empty parquet files (> 100 bytes because of the footer); skip them instead of crashing."""
+    out = []
+    for f in files:
+        try:
+            schema = pl.read_parquet_schema(f)
+        except Exception:
+            continue
+        if all(c in schema for c in cols) and pl.scan_parquet(f).select(pl.len()).collect().item() > 0:
+            out.append(f)
+    return out
+
+
 def _gene(expr):
     return expr.str.split("*").list.first()
 
@@ -40,11 +54,11 @@ def load_set(run: str, ds: str, which: str) -> pl.DataFrame | None:
     root = RUNS / run / ds / "pp"
     if which == "per_well":
         fs = sorted((root / "annotated").glob("*_paired.parquet")) if (root / "annotated").exists() else []
-        fs = [f for f in fs if f.stat().st_size > 100]
+        cols = ["name", "v_gene:0", "j_gene:0", "cdr3_aa:0", "v_gene:1", "locus:0"]
+        fs = readable_pairs(fs, cols)
         if not fs:
             return None
-        df = pl.concat([pl.read_parquet(f, columns=["name", "v_gene:0", "j_gene:0", "cdr3_aa:0", "v_gene:1", "locus:0"])
-                        for f in fs], how="vertical_relaxed").rename({"name": "barcode"})
+        df = pl.concat([pl.read_parquet(f, columns=cols) for f in fs], how="vertical_relaxed").rename({"name": "barcode"})
     else:
         f = root / ("pooled/pooled_pairs.parquet" if which == "pooled" else "pairs/pairs.parquet")
         if not f.exists():

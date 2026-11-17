@@ -22,6 +22,20 @@ LABELS = ["<0.1", "0.1-0.3", "0.3-0.6", "0.6-0.9", ">=0.9"]
 SCORE_COLS = ["well", "name", "sequence_id:0", "sequence_id:1", "sequence:0", "sequence:1"]
 
 
+def readable_pairs(files, cols):
+    """Paired files that actually hold rows with ``cols``. Wells without pairs can write column-less or
+    empty parquet files (> 100 bytes because of the footer); skip them instead of crashing."""
+    out = []
+    for f in files:
+        try:
+            schema = pl.read_parquet_schema(f)
+        except Exception:
+            continue
+        if all(c in schema for c in cols) and pl.scan_parquet(f).select(pl.len()).collect().item() > 0:
+            out.append(f)
+    return out
+
+
 def norm_lv(expr):
     return expr.str.replace(r"^(IG[KL]V\d+)D-", "${1}-")
 
@@ -57,10 +71,10 @@ def heavy_first(df: pl.DataFrame) -> pl.DataFrame:
 
 def per_well_pairs(out: Path) -> pl.DataFrame | None:
     fs = sorted((out / "annotated").glob("*_paired.parquet")) if (out / "annotated").exists() else []
-    fs = [f for f in fs if f.stat().st_size > 100]
+    cols = ["name", "sequence_id:0", "sequence_id:1", "v_gene:0", "v_gene:1", "cdr3_aa:0", "locus:0", "locus:1"]
+    fs = readable_pairs(fs, cols)
     if not fs:
         return None
-    cols = ["name", "sequence_id:0", "sequence_id:1", "v_gene:0", "v_gene:1", "cdr3_aa:0", "locus:0", "locus:1"]
     return pl.concat([pl.read_parquet(f, columns=cols) for f in fs], how="vertical_relaxed")
 
 
