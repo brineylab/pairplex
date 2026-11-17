@@ -98,6 +98,24 @@ def version():
     default="human",
     help="Germline database for V(D)J assignment",
 )
+@click.option(
+    "--pairing",
+    type=click.Choice(["scored", "exact"]),
+    default="scored",
+    help="Per-well pairing rule: 'scored' resolves multi-chain barcodes by UMI dominance and scores each pair; 'exact' keeps only 1 heavy + 1 light barcodes (v2-base)",
+)
+@click.option(
+    "--min-dominance",
+    "min_dominance",
+    type=float,
+    default=2.0,
+    help="Scored pairing: top chain of each locus group needs >= this many times the UMIs of the second-best chain",
+)
+@click.option(
+    "--legacy",
+    is_flag=True,
+    help="Reproduce v2-base behaviour (forces --pairing exact)",
+)
 @click.option("--quiet", is_flag=True, help="Whether to suppress output")
 @click.option(
     "--debug",
@@ -118,6 +136,9 @@ def run(
     merge_paired_reads: bool,
     receptor: str,
     germline_database: str,
+    pairing: str,
+    min_dominance: float,
+    legacy: bool,
     quiet: bool,
     debug: bool,
 ):
@@ -135,6 +156,9 @@ def run(
         merge_paired_reads=merge_paired_reads,
         receptor=receptor,
         germline_database=germline_database,
+        pairing=pairing,
+        min_dominance=min_dominance,
+        legacy=legacy,
         quiet=quiet,
         debug=debug,
     )

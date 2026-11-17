@@ -27,6 +27,15 @@ import polars as pl
 from natsort import natsorted
 from tqdm.auto import tqdm
 
+from .pairing import (
+    DEFAULT_MIN_DOMINANCE,
+    PAIRING_MODES,
+    contract_frame,
+    pair_well,
+    support_from_metadata,
+    well_number,
+    write_contract_pairs,
+)
 from .provenance import RunLog, run_log_path
 from .utils import available_cpus, parse_barcodes, print_splash, process_droplet
 
@@ -49,6 +58,9 @@ def run(
     merge_paired_reads: bool = False,
     receptor: str = "bcr",
     germline_database: str = "human",
+    pairing: str = "scored",
+    min_dominance: float = DEFAULT_MIN_DOMINANCE,
+    legacy: bool = False,
     quiet: bool = False,
     debug: bool = False,
 ) -> list:
@@ -105,6 +117,23 @@ def run(
         The germline database to use. Options are anything accepted by `abstar.run`, including
         custom databases if available.
 
+    pairing : str
+        How heavy and light chains of a (well, barcode) are paired. ``"scored"`` (default): rank
+        the productive heavy chains and the productive light chains (IGK and IGL together) by
+        UMIs (then reads) and emit the top heavy + top light when each group passes
+        ``min_dominance``; every pair gets a ``confidence`` and a ``margin`` (see
+        ``pairplex.pairing``), and all wells are also written to ``pairs/pairs.parquet``.
+        ``"exact"``: the ``v2-base`` rule, keep only barcodes with exactly one heavy and one
+        light chain; no ``pairs/pairs.parquet``.
+
+    min_dominance : float
+        Scored pairing only. The top chain of each locus group must have at least this many
+        times the UMIs of the second-best chain. Defaults to ``2.0`` (top chain holds >= 2/3 of
+        a 2-chain group). Values <= 1 accept any split (ties broken by reads).
+
+    legacy : bool
+        If ``True``, reproduce ``v2-base`` behaviour: forces ``pairing="exact"``.
+
     quiet : bool
         Whether to suppress the progress bar and other update messages.
 
@@ -119,6 +148,11 @@ def run(
 
     """
     parameters = dict(locals())  # captured first: exactly the arguments of this call
+    if legacy:
+        pairing = "exact"
+    if pairing not in PAIRING_MODES:
+        raise ValueError(f"pairing must be one of {PAIRING_MODES}, got {pairing!r}")
+    contract_frames = []
 
     # print splash screen
     if not quiet:
@@ -443,13 +477,19 @@ def run(
                 pairs_printer = tqdm(total=0, bar_format="{desc}", position=9, leave=False)
                 paired_airr_file = annotated_directory / f"{name}_paired.tsv"
                 paired_parquet_file = annotated_directory / f"{name}_paired.parquet"
-                pairs = abutils.tl.assign_pairs(sequences, delim="_", delim_occurance=-1)
-                pairs = [p for p in pairs if len(p.heavies) == 1 and len(p.lights) == 1]
-                pairs_printer.set_description_str(f"{len(pairs)} paired sequences")
-                abutils.io.to_airr(pairs, str(paired_airr_file), drop_na_columns=False)
-                abutils.io.to_parquet(
-                    pairs, str(paired_parquet_file), drop_na_columns=False
+                pairs = pair_well(
+                    sequences,
+                    paired_airr_file,
+                    paired_parquet_file,
+                    mode=pairing,
+                    support=support_from_metadata(metadata_df),
+                    min_dominance=min_dominance,
                 )
+                pairs_printer.set_description_str(f"{len(pairs)} paired sequences")
+                if pairing == "scored":
+                    contract_frames.append(
+                        contract_frame(paired_parquet_file, well_number(name))
+                    )
 
                 all_pairs += len(pairs)
                 running_total_printer.set_description_str(
@@ -481,12 +521,19 @@ def run(
             # update the main progress bar
             main_pbar.update(1)
 
+    n_contract_pairs = None
+    if pairing == "scored":
+        n_contract_pairs = write_contract_pairs(
+            contract_frames, output_directory / "pairs" / "pairs.parquet"
+        )
+
     run_log.finish(
         stats={
             "input_files": len(input_files),
             "valid_barcodes": all_valid_barcodes,
             "consensus_sequences": all_consensus_sequences,
             "pairs": all_pairs,
+            **({"pairs_parquet_rows": n_contract_pairs} if n_contract_pairs is not None else {}),
         }
     )
 
