@@ -43,6 +43,8 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from .provenance import RunLog
+
 SPECIES = ["barcode", "locus", "v_gene", "j_gene", "junction"]
 _ANN_COLS = ["sequence_id", "locus", "productive", "v_gene", "j_gene", "junction", "cdr3_aa", "sequence"]
 _WELL_RE = re.compile(r"(\d+)")  # first number in the file name: VDJ_74_unpaired.parquet, well000.fastq.csv
@@ -232,11 +234,15 @@ def run_pooled_pairing(
     ambient_filter: bool = False,
 ) -> tuple[pl.DataFrame, dict]:
     """Load a per-well PairPlex run, pair with ``pair_pooled`` and write a parquet (default
-    ``<run_dir>/pooled/pooled_pairs.parquet``)."""
+    ``<run_dir>/pooled/pooled_pairs.parquet``) plus ``<stem>_run_info.json`` (version, parameters,
+    totals)."""
+    parameters = dict(locals())
+    out = Path(output_file) if output_file else Path(run_dir) / "pooled" / "pooled_pairs.parquet"
+    log = RunLog(out.with_name(out.stem + "_run_info.json"), tool="pairplex pair-pooled", parameters=parameters)
     occ = load_run(run_dir, wells)
     pairs, info = pair_pooled(occ, leakage=leakage, min_confidence=min_confidence, ambient_filter=ambient_filter)
-    out = Path(output_file) if output_file else Path(run_dir) / "pooled" / "pooled_pairs.parquet"
     out.parent.mkdir(parents=True, exist_ok=True)
     pairs.write_parquet(out)
     info["output"] = str(out)
+    log.finish(stats={"pairs": pairs.height, **{k: v for k, v in info.items() if k != "output"}})
     return pairs, info
