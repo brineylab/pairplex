@@ -38,8 +38,17 @@ cat ~/work/PairPlex/bench/runs/NAME/STATUS          # queued / running slotN / D
 5. The harness wraps `abstar.run` so `mmseqs_threads=None` becomes 1 (mmseqs crash on >67-core nodes); an explicit count set by the branch is respected.
 6. Do not modify `simplex/` in feature branches: scoring uses this checkout's copy.
 
+## Post-merge integration check
+After every merge into `main`, run `bash diagnosis/bench/integration.sh`. It:
+- runs the full test suite (pairplex + simplex) on the merged `main`, locally with 2 workers;
+- queues one benchmark `main-<sha7>`;
+- writes `~/work/PairPlex/bench/integration/<sha7>.md`.
+
+Then compare `main-<sha7>` with the previous `main-*` run, or with `v2-base`. A merge that is neutral by design must come out SAME.
+
 ## Files
 - `make_real_subset.py`: builds the real subsets (one-time; `~/work/PairPlex/bench/make_real_subsets.sh`).
 - `stage_run.py`: runs the code under test (branch snapshot first on `sys.path`).
 - `stage_score.py`: scores outputs with harness code.
-- `bench.sh` / `submit.sh`: job and queue; `compare.py`: deltas and verdict.
+- `bench.sh` / `submit.sh`: job and queue (each run executes a frozen copy of `bench.sh`); `compare.py`: deltas and verdict.
+- `integration.sh`: post-merge integration check.
