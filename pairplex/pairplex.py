@@ -51,6 +51,7 @@ def run(
     germline_database: str = "human",
     mmseqs_threads: int = 1,
     tso_g_max: int = 3,
+    barcode_prefer_exact: bool = True,
     legacy: bool = False,
     quiet: bool = False,
     debug: bool = False,
@@ -120,8 +121,15 @@ def run(
         genuine 5' Gs of the transcript beyond the TSO's run are kept. v2-base removed every leading
         G (``lstrip("G")``).
 
+    barcode_prefer_exact : bool
+        Read orientation choice. If ``True`` (default), an exact barcode whitelist hit in either orientation
+        (forward or reverse complement) wins over a Hamming-1 correction in the other; corrections are used only
+        when neither orientation is exact. Ties keep the forward orientation. Orientation counts are written to
+        the run log (``stats.barcode_orientation``). v2-base took the first orientation whose barcode corrected.
+
     legacy : bool
-        If ``True``, reproduce v2-base exactly: forces ``tso_g_max`` to strip every leading G.
+        If ``True``, reproduce v2-base exactly: forces ``tso_g_max`` to strip every leading G
+        (``lstrip("G")``) and ``barcode_prefer_exact=False``.
 
     quiet : bool
         Whether to suppress the progress bar and other update messages.
@@ -141,6 +149,7 @@ def run(
         raise ValueError(f"mmseqs_threads must be a positive integer, got {mmseqs_threads!r}")
     if legacy:
         tso_g_max = None  # v2-base: lstrip("G")
+        barcode_prefer_exact = False  # v2-base: first orientation that corrects
     elif not isinstance(tso_g_max, int) or tso_g_max < 0:
         raise ValueError(f"tso_g_max must be a non-negative integer, got {tso_g_max!r}")
 
@@ -236,6 +245,7 @@ def run(
     running_total_printer = tqdm(total=0, bar_format="{desc}", position=2, leave=True)
     blank2_printer = tqdm(total=0, bar_format=" ", position=3, leave=True)
     all_valid_barcodes = 0
+    orientation_counts = {}
     all_consensus_sequences = 0
     all_pairs = 0
     running_total_printer.set_description_str(
@@ -297,18 +307,21 @@ def run(
 
             main_pbar.set_postfix_str("parsing barcodes", refresh=True)
             parquet_chunks = []
+            parse_kwargs = {"whitelist_path": whitelist_path, "tso_g_max": tso_g_max}
+            if barcode_prefer_exact:
+                parse_kwargs.update(prefer_exact=True, return_counts=True)
+            else:
+                parse_kwargs.update(prefer_exact=False)
             futures = [
-                executor.submit(
-                    parse_barcodes,
-                    chunk,
-                    temp_directory,
-                    whitelist_path=whitelist_path,
-                    tso_g_max=tso_g_max,
-                )
+                executor.submit(parse_barcodes, chunk, temp_directory, **parse_kwargs)
                 for chunk in fastq_chunks
             ]
             for future in as_completed(futures):
                 res = future.result()
+                if barcode_prefer_exact:
+                    res, counts = res
+                    for k, v in counts.items():
+                        orientation_counts[k] = orientation_counts.get(k, 0) + v
                 if res is not None:
                     parquet_chunks.append(res)
             to_delete.extend(parquet_chunks)
@@ -511,6 +524,7 @@ def run(
             "valid_barcodes": all_valid_barcodes,
             "consensus_sequences": all_consensus_sequences,
             "pairs": all_pairs,
+            **({"barcode_orientation": orientation_counts} if barcode_prefer_exact else {}),
         }
     )
 

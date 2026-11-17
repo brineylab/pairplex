@@ -211,7 +211,9 @@ def parse_barcodes(
     whitelist_path: str | Path | None = None,
     check_rc: bool = True,
     tso_g_max: int | None = TSO_G_MAX,
-) -> str | None:
+    prefer_exact: bool = True,
+    return_counts: bool = False,
+) -> str | None | tuple[str | None, dict]:
     """
     Process a chunk of fastq file to extract barcodes, UMIs and TSO sequences.
 
@@ -240,6 +242,20 @@ def parse_barcodes(
         the TSO's own rGrGrG run. Genuine 5' Gs beyond it are kept. ``None`` removes every leading G
         (``lstrip("G")``, the v2-base behaviour).
 
+    prefer_exact : bool = True
+        Orientation choice when ``check_rc`` is set. If ``True``, an exact whitelist hit in either orientation
+        wins over a Hamming-1 correction in the other; only if neither orientation is exact is the first
+        correctable orientation (forward, then reverse complement) used. If both orientations are exact, or
+        both need correction, the forward orientation is kept (and counted). If ``False``, the first
+        orientation whose barcode corrects is used even when the other one is exact (v2-base behaviour).
+
+    return_counts : bool = False
+        If ``True``, return ``(path, counts)``, where ``counts`` holds orientation-choice counters:
+        ``exact_fwd``, ``exact_rc``, ``corrected_fwd``, ``corrected_rc``, ``both_exact`` (both orientations
+        exact, forward kept), ``both_corrected`` (both need correction, forward kept) and ``switched`` (reads
+        where an exact reverse-complement hit replaced the corrected forward barcode v2-base used).
+        Only filled when ``prefer_exact`` is ``True``.
+
     enforce_bc_whitelist : bool = True
         Whether to enforce the barcode whitelist.
 
@@ -258,7 +274,24 @@ def parse_barcodes(
     whitelist = load_barcode_whitelist(whitelist_path)
 
     records = []
+    counts = dict.fromkeys(
+        ["exact_fwd", "exact_rc", "corrected_fwd", "corrected_rc", "both_exact", "both_corrected", "switched"], 0
+    )
     for seq in abutils.io.parse_fastx(str(input_file)):
+        if prefer_exact:
+            # same fixed offsets as below; see the NOTE there
+            chosen = _choose_orientation(seq.sequence, whitelist, check_rc, counts)
+            if chosen is not None:
+                s, corrected = chosen
+                records.append(
+                    {
+                        "umi": s[16:26],
+                        "barcode": corrected,
+                        "seq_id": seq.id,
+                        "sequence": strip_tso_g(s[36:], tso_g_max),  # remove the TSO's G-run
+                    }
+                )
+            continue
         seqs = [seq.sequence]
         if check_rc:
             seqs.append(abutils.tl.reverse_complement(seq.sequence))
@@ -288,13 +321,57 @@ def parse_barcodes(
             # all done!
             break
 
+    output_file = None
     if records:
         output_directory = Path(output_directory)
         output_directory.mkdir(parents=True, exist_ok=True)
         output_file = output_directory / f"bcdf_{output_name}.parquet"
         df = pl.DataFrame(records)
         df.write_parquet(output_file)
-        return str(output_file)
+        output_file = str(output_file)
+    if return_counts:
+        return output_file, counts
+    return output_file
+
+
+def _choose_orientation(
+    sequence: str, whitelist: set[str], check_rc: bool, counts: dict
+) -> tuple[str, str] | None:
+    """
+    Pick the read orientation for ``parse_barcodes(prefer_exact=True)``.
+
+    Returns ``(oriented_sequence, barcode)`` or ``None``. An exact whitelist hit in either orientation beats a
+    Hamming-1 correction; ties (both exact, or both corrected) keep the forward orientation. Updates ``counts``.
+    """
+    fwd_bc = sequence[:16]
+    fwd_exact = fwd_bc in whitelist
+    rc = rc_bc = None
+    rc_exact = False
+    if check_rc:
+        rc = abutils.tl.reverse_complement(sequence)
+        rc_bc = rc[:16]
+        rc_exact = rc_bc in whitelist
+    if fwd_exact:
+        counts["exact_fwd"] += 1
+        if rc_exact:
+            counts["both_exact"] += 1
+        return sequence, fwd_bc
+    if rc_exact:
+        counts["exact_rc"] += 1
+        if correct_barcode(fwd_bc, whitelist) is not None:
+            counts["switched"] += 1
+        return rc, rc_bc
+    fwd_corrected = correct_barcode(fwd_bc, whitelist)
+    rc_corrected = correct_barcode(rc_bc, whitelist) if check_rc else None
+    if fwd_corrected is not None:
+        counts["corrected_fwd"] += 1
+        if rc_corrected is not None:
+            counts["both_corrected"] += 1
+        return sequence, fwd_corrected
+    if rc_corrected is not None:
+        counts["corrected_rc"] += 1
+        return rc, rc_corrected
+    return None
 
 
 def greedy_clustering(

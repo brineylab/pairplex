@@ -111,6 +111,11 @@ def version():
     help="Maximum number of Gs stripped after the TSO prefix (the TSO's rGrGrG run); genuine 5' Gs are kept",
 )
 @click.option(
+    "--barcode_prefer_exact/--no-barcode_prefer_exact",
+    default=True,
+    help="Prefer the read orientation with an exact barcode whitelist hit over a Hamming-1 correction in the other",
+)
+@click.option(
     "--legacy",
     is_flag=True,
     help="Reproduce v2-base behaviour exactly (overrides the options of newer fixes)",
@@ -137,6 +142,7 @@ def run(
     germline_database: str,
     mmseqs_threads: int,
     tso_g_max: int,
+    barcode_prefer_exact: bool,
     legacy: bool,
     quiet: bool,
     debug: bool,
@@ -157,6 +163,7 @@ def run(
         germline_database=germline_database,
         mmseqs_threads=mmseqs_threads,
         tso_g_max=tso_g_max,
+        barcode_prefer_exact=barcode_prefer_exact,
         legacy=legacy,
         quiet=quiet,
         debug=debug,
