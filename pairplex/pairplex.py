@@ -53,6 +53,7 @@ def run(
     debug: bool = False,
     pooling: str = "per_well",
     crosswell_shards: int | None = None,
+    crosswell_umi_collapse: bool = True,
     legacy: bool = False,
 ) -> list:
     """
@@ -130,6 +131,11 @@ def run(
     crosswell_shards : int | None
         Cross-well mode only: number of on-disk barcode shards (memory scales with one shard).
         ``None`` picks about one shard per 160 MB of gzipped input (~1M reads).
+
+    crosswell_umi_collapse : bool
+        Cross-well mode only (diagnostic). ``True`` (default): collapse UMIs per barcode across
+        wells (directional adjacency). ``False``: no collapse; a molecule is a raw (barcode, UMI),
+        so per-well counts ``n_w`` count raw UMIs.
 
     legacy : bool
         If ``True``, reproduce ``v2-base`` behaviour exactly: forces ``pooling="per_well"``.
@@ -244,6 +250,7 @@ def run(
             receptor=receptor,
             germline_database=germline_database,
             n_shards=crosswell_shards,
+            umi_collapse=crosswell_umi_collapse,
             quiet=quiet,
             debug=debug,
         )

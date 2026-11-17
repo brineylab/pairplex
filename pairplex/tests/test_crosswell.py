@@ -133,6 +133,19 @@ def test_collapse_counts_reads_across_wells():
     assert r["contigs"][0]["umis"] == 1 and r["contigs"][0]["raw_umis"] == 2
 
 
+def test_umi_collapse_off_counts_raw_umis():
+    reads = pl.DataFrame({
+        "umi": ["AAAAAAAAAA"] * 3 + ["AAAAAAAAAT"] * 2,
+        "well": [1, 2, 3, 1, 1],
+        "sequence": ["ACGTACGTAC" * 20] * 5,
+    })
+    r = process_droplet_crosswell("BC", reads, min_cluster_reads=1, umi_collapse=False)
+    assert r["stats"]["raw_umis"] == 2 and r["stats"]["molecules"] == 2
+    assert r["contigs"][0]["umis"] == 2
+    # AAAAAAAAAA: 1 read in each of wells 1-3 -> tie -> well 1; AAAAAAAAAT: well 1
+    assert {(x["well"], x["umis"]) for x in r["wells"]} == {(1, 2), (2, 0), (3, 0)}
+
+
 # ---- molecule wells -------------------------------------------------------------------------
 
 def test_assign_molecule_wells_majority_and_tie():

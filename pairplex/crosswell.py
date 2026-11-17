@@ -268,6 +268,7 @@ def process_droplet_crosswell(
     min_cluster_reads: int = 3,
     min_cluster_umis: int = 1,
     min_cluster_fraction: float = 0.0,
+    umi_collapse: bool = True,
 ) -> dict:
     """Process all reads of one droplet barcode, pooled across wells (columns umi, well, sequence).
 
@@ -277,7 +278,8 @@ def process_droplet_crosswell(
     raw = reads["umi"].to_list()
     wells = reads["well"].to_list()
     seqs = reads["sequence"].to_list()
-    fix = directional_collapse(Counter(raw))
+    # umi_collapse=False (diagnostic): a molecule is a raw (barcode, UMI)
+    fix = directional_collapse(Counter(raw)) if umi_collapse else {u: u for u in raw}
     umis = [fix[u] for u in raw]
 
     mol = assign_molecule_wells(umis, wells)
@@ -383,6 +385,7 @@ def run_crosswell(
     receptor: str = "bcr",
     germline_database: str = "human",
     n_shards: int | None = None,
+    umi_collapse: bool = True,
     quiet: bool = False,
     debug: bool = False,
 ) -> dict:
@@ -405,7 +408,8 @@ def run_crosswell(
     tot = Counter()
     leak_totals = []
     kwargs = dict(clustering_threshold=clustering_threshold, min_cluster_reads=min_cluster_reads,
-                  min_cluster_umis=min_cluster_umis, min_cluster_fraction=min_cluster_fraction)
+                  min_cluster_umis=min_cluster_umis, min_cluster_fraction=min_cluster_fraction,
+                  umi_collapse=umi_collapse)
     shard_files = []
     import multiprocessing as mp
     with ProcessPoolExecutor(max_workers=available_cpus(), mp_context=mp.get_context("spawn")) as ex:
@@ -494,6 +498,7 @@ def run_crosswell(
     reads = max(tot["reads"], 1)
     stats = {
         "pooling": "across_wells",
+        "umi_collapse": umi_collapse,
         "input_files": len(input_files),
         "wells": W,
         "shards": n_shards,
