@@ -83,10 +83,11 @@ def test_missing_locus_group():
 # ---------------------------------------------------------------- well-level
 
 
-def _seq(bc, n, locus, productive=True):
+def _seq(bc, n, locus, productive=True, cdr3=None):
     return abutils.Sequence({"sequence_id": f"{bc}_contig-{n}", "sequence": "ACGT" * 10, "locus": locus,
                              "productive": productive, "v_gene": f"{locus}V1", "j_gene": f"{locus}J1",
-                             "v_call": f"{locus}V1*01", "junction": "TGT" + "A" * n, "cdr3_aa": "CAR"})
+                             "v_call": f"{locus}V1*01", "junction": "TGT" + "A" * n,
+                             "cdr3_aa": cdr3 or "CAR" + "W" * n})
 
 
 def _well():
@@ -114,6 +115,26 @@ def test_scored_pairs_on_a_well():
     assert bbb.light["umis"] == 7 and bbb.confidence == pytest.approx(4 / 5 * 7 / 9)
     # the legacy rule keeps only the strict 1H+1L barcode
     assert {p.name for p in exact_pairs(seqs)} == {"AAA"}
+
+
+def test_clonal_relatives_do_not_compete():
+    # 2H+1L where both heavies are the same clonotype (split consensus / clonal relatives)
+    seqs = [_seq("EEE", 0, "IGH", cdr3="CARDY"), _seq("EEE", 1, "IGH", cdr3="CARDY"), _seq("EEE", 2, "IGK")]
+    support = {"EEE_contig-0": (3, 30), "EEE_contig-1": (3, 40), "EEE_contig-2": (5, 50)}
+    pairs, reasons = scored_pairs(seqs, support)
+    assert reasons == {"paired": 1}
+    p = pairs[0]
+    assert p.heavy["sequence_id"] == "EEE_contig-1" and p.heavy["umis"] == 6
+    assert p.confidence == pytest.approx(6 / 7 * 5 / 6)
+    # without collapsing, the even split is ambiguous and the lineage is lost
+    _, reasons = scored_pairs(seqs, support, collapse_clonal=False)
+    assert reasons == {"heavy_ambiguous": 1}
+
+
+def test_different_clonotypes_still_compete():
+    seqs = [_seq("FFF", 0, "IGH", cdr3="CARDY"), _seq("FFF", 1, "IGH", cdr3="CTTGG"), _seq("FFF", 2, "IGK")]
+    support = {"FFF_contig-0": (3, 30), "FFF_contig-1": (3, 40), "FFF_contig-2": (5, 50)}
+    assert scored_pairs(seqs, support)[1] == {"heavy_ambiguous": 1}
 
 
 def test_pair_well_writes_outputs_and_contract(tmp_path):

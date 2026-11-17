@@ -112,6 +112,12 @@ def version():
     help="Scored pairing: top chain of each locus group needs >= this many times the UMIs of the second-best chain",
 )
 @click.option(
+    "--collapse-clonal/--no-collapse-clonal",
+    "collapse_clonal",
+    default=True,
+    help="Scored pairing: merge same-locus contigs sharing V, J and CDR3 aa before ranking",
+)
+@click.option(
     "--legacy",
     is_flag=True,
     help="Reproduce v2-base behaviour (forces --pairing exact)",
@@ -138,6 +144,7 @@ def run(
     germline_database: str,
     pairing: str,
     min_dominance: float,
+    collapse_clonal: bool,
     legacy: bool,
     quiet: bool,
     debug: bool,
@@ -158,6 +165,7 @@ def run(
         germline_database=germline_database,
         pairing=pairing,
         min_dominance=min_dominance,
+        collapse_clonal=collapse_clonal,
         legacy=legacy,
         quiet=quiet,
         debug=debug,

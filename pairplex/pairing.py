@@ -16,6 +16,9 @@ Two rules are available:
     and the *productive* light chains (IGK and IGL together: a cell expresses one light chain,
     so kappa and lambda compete in the same group) are ranked by support: corrected UMIs from
     the metadata CSV, then reads as a tie-break, then contig name for determinism.
+    Same-locus contigs sharing V gene, J gene and CDR3 aa are first merged into one chain
+    (summed support; ``collapse_clonal``), so a chain split into two consensus clusters, or two
+    clonal relatives, never competes with itself.
     The top heavy and the top light are emitted when, in each group,
 
         u1 >= min_dominance * u2
@@ -32,7 +35,8 @@ Two rules are available:
     * ``margin = min_g (u1_g - u2_g) / (U_g + pseudocount)``: the smaller, over the two
       groups, of the gap between the top and the second-best chain's share. In [0, 1); equal
       to ``min(s_H, s_L)`` for a 1H+1L barcode.
-    * ``umis`` on each chain (``umis:0`` heavy, ``umis:1`` light in the paired outputs).
+    * ``umis`` on each chain (``umis:0`` heavy, ``umis:1`` light in the paired outputs): the
+      chain's support used for ranking (summed over merged same-clonotype contigs).
 
 Default ``min_dominance = 2.0``: the top chain must hold at least two thirds of a 2-chain
 group's UMIs. In real data about half of the 1H+2L / 2H+1L barcodes meet it; near-even splits
@@ -129,6 +133,33 @@ def resolve_barcode(
     return Resolution(hs[0], ls[0], sh * sl, min(mh, ml), "paired")
 
 
+def _gene(name) -> str | None:
+    return name.split("*")[0] if isinstance(name, str) else None
+
+
+def collapse_clonotypes(chains: list[Chain], annotations: dict) -> list[Chain]:
+    """
+    Merge chains of one locus group that share a clonotype (locus, V gene, J gene, CDR3 aa).
+
+    Within one (well, barcode), two contigs with the same clonotype are one chain split into two
+    consensus clusters (sequencing or PCR errors, fragments) or clonal relatives; either way they
+    support the same pairing and must not compete. The merged chain keeps the name of its best
+    contig (UMIs, reads, name) and the summed UMIs and reads. Contigs without a CDR3 aa are kept
+    as they are.
+    """
+    groups: dict[tuple, list[Chain]] = {}
+    for c in chains:
+        a = annotations.get(c.name)
+        cdr3 = a["cdr3_aa"] if a is not None else None
+        key = (a["locus"], _gene(a["v_gene"]), _gene(a["j_gene"]), cdr3) if cdr3 else ("_id", c.name)
+        groups.setdefault(key, []).append(c)
+    out = []
+    for members in groups.values():
+        best = _rank(members)[0]
+        out.append(Chain(best.name, sum(m.umis for m in members), sum(m.reads for m in members)))
+    return out
+
+
 def _barcode(sequence_id: str) -> str:
     # same grouping as abutils.tl.assign_pairs(delim="_", delim_occurance=-1)
     return "_".join(sequence_id.split("_")[:-1])
@@ -152,6 +183,7 @@ def scored_pairs(
     support: dict[str, tuple[int, int]],
     min_dominance: float = DEFAULT_MIN_DOMINANCE,
     pseudocount: float = DEFAULT_PSEUDOCOUNT,
+    collapse_clonal: bool = True,
 ) -> tuple[list, dict[str, int]]:
     """
     Resolve every barcode of one well with ``resolve_barcode``.
@@ -162,6 +194,9 @@ def scored_pairs(
         Annotated contigs of one well (``sequence_id`` = ``<barcode>_<contig>``).
     support : dict
         ``name -> (umis, reads)`` from the metadata CSV. Missing contigs count as 1 UMI, 0 reads.
+    collapse_clonal : bool
+        Merge same-locus contigs of a barcode that share V gene, J gene and CDR3 aa before
+        ranking (see ``collapse_clonotypes``).
 
     Returns
     -------
@@ -188,11 +223,8 @@ def scored_pairs(
     pairs, reasons = [], {}
     for bc, (h_ids, l_ids) in groups.items():
         def chains(ids):
-            out = []
-            for i in ids:
-                u, r = support.get(i, (1, 0))
-                out.append(Chain(i, int(u), int(r)))
-            return out
+            out = [Chain(i, *(int(x) for x in support.get(i, (1, 0)))) for i in ids]
+            return collapse_clonotypes(out, by_id) if collapse_clonal else out
 
         res = resolve_barcode(chains(h_ids), chains(l_ids), min_dominance, pseudocount)
         reasons[res.reason] = reasons.get(res.reason, 0) + 1
@@ -236,6 +268,7 @@ def pair_well(
     support: dict[str, tuple[int, int]] | None = None,
     min_dominance: float = DEFAULT_MIN_DOMINANCE,
     pseudocount: float = DEFAULT_PSEUDOCOUNT,
+    collapse_clonal: bool = True,
 ) -> list:
     """Pair one well's annotated contigs with the chosen rule and write the paired files."""
     if mode == "exact":
@@ -246,7 +279,7 @@ def pair_well(
         return pairs
     if mode != "scored":
         raise ValueError(f"unknown pairing mode {mode!r}; expected one of {PAIRING_MODES}")
-    pairs, _ = scored_pairs(sequences, support or {}, min_dominance, pseudocount)
+    pairs, _ = scored_pairs(sequences, support or {}, min_dominance, pseudocount, collapse_clonal)
     write_paired(pairs, paired_airr_file, paired_parquet_file, scored=True)
     return pairs
 

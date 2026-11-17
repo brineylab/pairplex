@@ -60,6 +60,7 @@ def run(
     germline_database: str = "human",
     pairing: str = "scored",
     min_dominance: float = DEFAULT_MIN_DOMINANCE,
+    collapse_clonal: bool = True,
     legacy: bool = False,
     quiet: bool = False,
     debug: bool = False,
@@ -130,6 +131,11 @@ def run(
         Scored pairing only. The top chain of each locus group must have at least this many
         times the UMIs of the second-best chain. Defaults to ``2.0`` (top chain holds >= 2/3 of
         a 2-chain group). Values <= 1 accept any split (ties broken by reads).
+
+    collapse_clonal : bool
+        Scored pairing only. Before ranking, merge same-locus contigs of a (well, barcode) that
+        share V gene, J gene and CDR3 aa (one chain split into several consensus clusters, or
+        clonal relatives), summing their UMIs, so they do not compete. Defaults to ``True``.
 
     legacy : bool
         If ``True``, reproduce ``v2-base`` behaviour: forces ``pairing="exact"``.
@@ -484,6 +490,7 @@ def run(
                     mode=pairing,
                     support=support_from_metadata(metadata_df),
                     min_dominance=min_dominance,
+                    collapse_clonal=collapse_clonal,
                 )
                 pairs_printer.set_description_str(f"{len(pairs)} paired sequences")
                 if pairing == "scored":
