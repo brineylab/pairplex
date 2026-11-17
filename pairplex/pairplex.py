@@ -27,6 +27,7 @@ import polars as pl
 from natsort import natsorted
 from tqdm.auto import tqdm
 
+from .provenance import RunLog, run_log_path
 from .utils import available_cpus, parse_barcodes, print_splash, process_droplet
 
 ######################################################
@@ -116,6 +117,7 @@ def run(
         A list of paths to the output files.
 
     """
+    parameters = dict(locals())  # captured first: exactly the arguments of this call
 
     # print splash screen
     if not quiet:
@@ -170,6 +172,15 @@ def run(
     else:
         raise ValueError(f"Invalid input type: {type(sequences)}")
     input_files = [f for f in input_files if "Unassigned" not in f]
+
+    # provenance: version, git commit, dependencies, parameters and inputs of this run
+    parameters["max_workers"] = available_cpus()
+    run_log = RunLog(
+        run_log_path(log_directory),
+        tool="pairplex run",
+        parameters=parameters,
+        inputs=input_files,
+    )
 
     # merge paired reads
     if merge_paired_reads:
@@ -468,5 +479,14 @@ def run(
 
             # update the main progress bar
             main_pbar.update(1)
+
+    run_log.finish(
+        stats={
+            "input_files": len(input_files),
+            "valid_barcodes": all_valid_barcodes,
+            "consensus_sequences": all_consensus_sequences,
+            "pairs": all_pairs,
+        }
+    )
 
     # return partition_files
