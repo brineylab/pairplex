@@ -243,7 +243,7 @@ def make_fastq(
     debug: bool,
 ):
     run_make_fastq(
-        sequencing_folder=sequencing_folder,
+        sequence_dir=sequencing_folder,
         output_directory=output_directory,
         samplesheet=samplesheet,
         platform=platform,
