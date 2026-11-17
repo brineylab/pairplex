@@ -2,9 +2,10 @@
 its (resident well, barcode) as paired / collision / true extra chain (leakage or ambient) / chain
 lost / spurious extra contig made by PairPlex.
 
-Usage: python simplex_drop_reasons.py SCENARIO_DIR   (contains sim/truth and pp/annotated)
+Usage: python simplex_drop_reasons.py SCENARIO_DIR [OUT_CSV]   (contains sim/truth and pp/annotated)
 """
 import polars as pl, glob, re, sys, os
+OUT = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else None
 os.chdir(sys.argv[1])
 cells = pl.read_parquet('sim/truth/truth_cells.parquet').filter(pl.col('survived_0') & pl.col('survived_1'))
 tc = pl.read_parquet('sim/truth/truth_components.parquet')
@@ -40,5 +41,8 @@ def cat(r):
     return 'spurious extra contig (PairPlex)'
 c = c.with_columns(pl.struct(['paired', 'cells_here', 'own0', 'own1', 'tH', 'tL', 'nH', 'nL']).map_elements(cat, return_dtype=pl.Utf8).alias('reason'))
 print(sys.argv[1], 'cells survived both:', c.height)
-print(c.group_by('reason').len().with_columns((pl.col('len') / c.height).round(3).alias('frac')).sort('len', descending=True))
+summary = c.group_by('reason').len().with_columns((pl.col('len') / c.height).round(3).alias('frac')).sort('len', descending=True)
+print(summary)
+if OUT:
+    summary.write_csv(OUT)
 print(c.filter(pl.col('reason').str.starts_with('spurious')).group_by('nH', 'nL').len().sort('len', descending=True).head(6))
