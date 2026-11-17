@@ -47,7 +47,7 @@ class SimplexConfig:
       `fragment_rate` / `fragment_rate_heavy` of molecules lose their 5' part — fragmented RNA, TSO at
       the break — the rest are full-length amplicons; `fragment_keep` = (min, max) kept 3' fraction; `"molecule_3p"`: one 3' cut per molecule;
       `"per_read_both"`: legacy v1 per-read cuts at both ends, which splinters molecules).
-    - **v2 biology knobs** (measured on real PairPlex data, see diagnosis/): `release_rate_heavy` /
+    - **v2 biology knobs** (measured on real PairPlex data, see profiles.py): `release_rate_heavy` /
       `release_rate_light` override `release_rate` per chain (pre-split leakage differs by chain);
       `molecules_per_chain_mean_light` overrides the light-chain molecule count (light template is
       more abundant); `ambient_rate` adds pre-RT ambient capture: free mRNA from lysed cells barcoded

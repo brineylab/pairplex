@@ -27,6 +27,7 @@ import polars as pl
 from natsort import natsorted
 from tqdm.auto import tqdm
 
+from .provenance import RunLog, run_log_path
 from .utils import available_cpus, parse_barcodes, print_splash, process_droplet
 
 ######################################################
@@ -84,7 +85,8 @@ def run(
 
     min_cluster_umis : int
         The minimum number of UMIs to consider a cluster for consensus sequence generation. Clusters containing fewer
-        UMIs are discarded.
+        UMIs are discarded. Defaults to ``1``. For datasets with heavy ambient contamination, a value of ``2`` is
+        recommended.
 
     min_cluster_fraction : float
         The minimum fraction of reads to consider a cluster for consensus sequence generation. Clusters containing fewer
@@ -116,6 +118,7 @@ def run(
         A list of paths to the output files.
 
     """
+    parameters = dict(locals())  # captured first: exactly the arguments of this call
 
     # print splash screen
     if not quiet:
@@ -171,6 +174,15 @@ def run(
         raise ValueError(f"Invalid input type: {type(sequences)}")
     input_files = [f for f in input_files if "Unassigned" not in f]
 
+    # provenance: version, git commit, dependencies, parameters and inputs of this run
+    parameters["max_workers"] = available_cpus()
+    run_log = RunLog(
+        run_log_path(log_directory),
+        tool="pairplex run",
+        parameters=parameters,
+        inputs=input_files,
+    )
+
     # merge paired reads
     if merge_paired_reads:
         merge_directory = output_directory / "merged"
@@ -211,6 +223,11 @@ def run(
         max_workers=available_cpus(), mp_context=mp.get_context("spawn")
     ) as executor:
         for input_file in natsorted(input_files):
+            # Checking for empty file, as this will break later steps
+            if os.path.getsize(input_file) == 0:
+                main_pbar.set_postfix_str("partitioning barcodes", refresh=True)
+                continue
+
             to_delete = []
 
             # setup text printers (using tqdm so they get cleared once file is processed)
@@ -463,5 +480,14 @@ def run(
 
             # update the main progress bar
             main_pbar.update(1)
+
+    run_log.finish(
+        stats={
+            "input_files": len(input_files),
+            "valid_barcodes": all_valid_barcodes,
+            "consensus_sequences": all_consensus_sequences,
+            "pairs": all_pairs,
+        }
+    )
 
     # return partition_files

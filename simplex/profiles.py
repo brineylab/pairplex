@@ -2,7 +2,7 @@
 
 `PRINCEPS_2025` encodes what the real-data diagnosis measured on the 12-donor PairPlex princeps
 study (UDA-seq style: overloaded 10x HT 5' lane, ~1M fixed cells per reaction, 96-well split,
-pools of 24). Sources are in the repo's `diagnosis/` scripts; values are medians/ballparks, not
+pools of 24). Sources are the diagnosis scripts (not shipped with the package); values are medians/ballparks, not
 fits — sweep around them.
 
 - release (pre-split leakage of barcoded cDNA out of fixed cells): medians over 23 reactions

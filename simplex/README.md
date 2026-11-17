@@ -10,7 +10,7 @@ it sits beside it (`import simplex`).
 
 ---
 
-> **v2 (calibrated).** A diagnosis of real PairPlex data (`../diagnosis/`) measured the regime
+> **v2 (calibrated).** A diagnosis of real PairPlex data (analysis scripts kept outside this repo's main branch) measured the regime
 > SimPlex must reproduce: barcoded cDNA leaks out of fixed cells before the well split (heavy ≈ 0.55,
 > light ≈ 0.85 of molecules end up in other wells), ambient mRNA is copied into other droplets
 > before RT, most chains carry 1–2 molecules, ~1/5 of UMIs are sequencing errors, and heavy chains
@@ -420,7 +420,7 @@ built to make PairPlex threshold selection an evidence-based, precision/yield de
 | Change | Knob(s) | Why |
 |---|---|---|
 | **Fix: barcode pool** | `barcode_pool_size` | v1 capped the pool at the droplet count and sampled with replacement, so every pool ≥ K behaved identically (reuse forced even for 100k). Now droplets draw from a pool of exactly the requested size. |
-| **Fix: truncation model** | `truncation`, `fragment_rate`, `fragment_rate_heavy` | v1 cut 0–10% off both ends of *every read*, splintering single molecules under PairPlex's global-alignment clustering (PairPlex's default threshold gave 0 pairs; "more depth → fewer pairs" was an artifact). Default is now `"fragment_5p"`: full-length amplicons (TSO → primer) plus a fraction of 5'-fragmented molecules, per molecule. `fragment_keep` = kept 3' fraction of a fragment (input chains are V(D)J only, so long values keep CDR3 + V and create extra same-CDR3 contigs that real data does not show; the profile uses 0.05–0.35, matching the real 1.5–3.1% duplicate-contig rate — `diagnosis/duplicate_contigs.py`). `"per_read_both"` reproduces v1. |
+| **Fix: truncation model** | `truncation`, `fragment_rate`, `fragment_rate_heavy` | v1 cut 0–10% off both ends of *every read*, splintering single molecules under PairPlex's global-alignment clustering (PairPlex's default threshold gave 0 pairs; "more depth → fewer pairs" was an artifact). Default is now `"fragment_5p"`: full-length amplicons (TSO → primer) plus a fraction of 5'-fragmented molecules, per molecule. `fragment_keep` = kept 3' fraction of a fragment (input chains are V(D)J only, so long values keep CDR3 + V and create extra same-CDR3 contigs that real data does not show; the profile uses 0.05–0.35, matching the real 1.5–3.1% duplicate-contig rate). `"per_read_both"` reproduces v1. |
 | Chain-specific leakage | `release_rate_heavy`, `release_rate_light` | Light chains leak more than heavy in every real reaction. |
 | Light template abundance | `molecules_per_chain_mean_light` | Light libraries ~8× heavy by qPCR. |
 | **Ambient across barcodes** | `ambient_rate` | Pre-RT capture of free mRNA into *other* droplets: copies get a new barcode + UMI and a random well (`is_ambient`, `n_reads_ambient` in truth). Release only moves molecules across wells. |
@@ -440,7 +440,7 @@ Values and their sources are documented in `simplex/profiles.py` (λ 2.2; heavy/
 which is not tractable; collisions depend on λ and the number of wells, not on cells per well.
 
 ### Ground-truth validation runner
-`diagnosis/simplex_validation.py` runs scenarios (calibrated; clean; no leakage; no ambient;
+A validation runner (kept with the diagnosis scripts, outside the package) runs scenarios (calibrated; clean; no leakage; no ambient;
 leakage 0.5; improved protocol), PairPlex with real defaults and with `min_cluster_umis=2`, and
 the pooled confidence-scored pairing (`pairplex pair-pooled`), and reports precision, cell recall
 and precision by confidence bin.

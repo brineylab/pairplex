@@ -32,4 +32,4 @@ libraries. Study data and numbers are kept with the project, not in this reposit
    fragment fraction, confidence distribution).
 
 Validation: every change is scored against SimPlex ground truth (`simplex.PRINCEPS_2025` profile
-plus scenario variants, `diagnosis/simplex_validation.py`).
+plus scenario variants, run by the validation harness kept with the diagnosis scripts).
