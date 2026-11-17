@@ -47,7 +47,7 @@ def test_abstar_receives_explicit_mmseqs_threads(tmp_path, monkeypatch, threads)
 
 def test_large_well_still_gets_explicit_threads(tmp_path, monkeypatch):
     """v2-base passed None once a well had >= 1000 consensus sequences: the crashing case."""
-    monkeypatch.setenv("PAIRPLEX_MAX_WORKERS", "4")
+    monkeypatch.setenv("PAIRPLEX_MAX_WORKERS", "2")
     reads = tmp_path / "well001.fastq"
     _write_reads(reads, n_barcodes=510, reads_per_chain=3)
     with mock.patch.object(pp.abstar, "run", return_value=[]) as abstar_run:
@@ -61,3 +61,20 @@ def test_large_well_still_gets_explicit_threads(tmp_path, monkeypatch):
 def test_invalid_mmseqs_threads_rejected(tmp_path, bad):
     with pytest.raises(ValueError):
         pp.run(str(tmp_path), tmp_path / "out", quiet=True, mmseqs_threads=bad)
+
+
+def test_correct_barcodes_large_input_gets_explicit_threads(tmp_path, monkeypatch):
+    """correct-barcodes annotates the raw input; v2-base passed None once it had >= 1000 reads."""
+    from pairplex import correct_barcodes as cb
+
+    monkeypatch.setenv("PAIRPLEX_MAX_WORKERS", "2")
+    reads = tmp_path / "well001.fastq"
+    _write_reads(reads, n_barcodes=101, reads_per_chain=6)  # 1212 reads
+
+    class _Stop(Exception):
+        pass
+
+    with mock.patch.object(cb.abstar, "run", side_effect=_Stop) as abstar_run:
+        with pytest.raises(_Stop):
+            cb.run(str(reads), tmp_path / "out", temp_directory=tmp_path / "tmp", quiet=True)
+    assert abstar_run.call_args.kwargs["mmseqs_threads"] == 1
