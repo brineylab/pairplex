@@ -1,0 +1,269 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 1520" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
+  <defs>
+    <!-- Gradient for header -->
+    <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#16213e"/>
+    </linearGradient>
+    <!-- Step gradients -->
+    <linearGradient id="step1Grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea"/>
+      <stop offset="100%" style="stop-color:#5a67d8"/>
+    </linearGradient>
+    <linearGradient id="step2Grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#48bb78"/>
+      <stop offset="100%" style="stop-color:#38a169"/>
+    </linearGradient>
+    <linearGradient id="step3Grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ed8936"/>
+      <stop offset="100%" style="stop-color:#dd6b20"/>
+    </linearGradient>
+    <linearGradient id="step4Grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#e53e3e"/>
+      <stop offset="100%" style="stop-color:#c53030"/>
+    </linearGradient>
+    <linearGradient id="step5Grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#9f7aea"/>
+      <stop offset="100%" style="stop-color:#805ad5"/>
+    </linearGradient>
+    <linearGradient id="outputGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#16213e"/>
+    </linearGradient>
+    <!-- Shadow filter -->
+    <filter id="shadow" x="-3%" y="-3%" width="106%" height="110%">
+      <feDropShadow dx="2" dy="3" stdDeviation="4" flood-color="#00000030"/>
+    </filter>
+    <filter id="shadowSmall" x="-3%" y="-3%" width="106%" height="110%">
+      <feDropShadow dx="1" dy="2" stdDeviation="2" flood-color="#00000020"/>
+    </filter>
+    <!-- Arrow marker -->
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrowheadWhite" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#cbd5e1"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="1520" rx="16" fill="#f8fafc"/>
+
+  <!-- ===== TITLE ===== -->
+  <rect x="40" y="25" width="1020" height="90" rx="12" fill="url(#headerGrad)" filter="url(#shadow)"/>
+  <text x="550" y="62" text-anchor="middle" fill="white" font-size="28" font-weight="700" letter-spacing="1">PairPlex Pipeline</text>
+  <text x="550" y="90" text-anchor="middle" fill="#94a3b8" font-size="14" letter-spacing="0.5">Paired Antibody Sequencing via Combinatorial Barcoding</text>
+
+  <!-- ===== INPUT ===== -->
+  <rect x="360" y="145" width="380" height="60" rx="30" fill="white" stroke="#cbd5e1" stroke-width="2" filter="url(#shadowSmall)"/>
+  <text x="418" y="172" fill="#475569" font-size="13" font-weight="600">INPUT</text>
+  <text x="418" y="190" fill="#94a3b8" font-size="11">FASTQ / FASTA files (gzip supported)</text>
+  <!-- file icon -->
+  <g transform="translate(380, 158)">
+    <rect x="0" y="0" width="18" height="22" rx="2" fill="none" stroke="#64748b" stroke-width="1.5"/>
+    <polyline points="11,0 11,7 18,7" fill="none" stroke="#64748b" stroke-width="1.5"/>
+    <line x1="4" y1="12" x2="14" y2="12" stroke="#94a3b8" stroke-width="1"/>
+    <line x1="4" y1="16" x2="12" y2="16" stroke="#94a3b8" stroke-width="1"/>
+  </g>
+
+  <!-- Arrow input → optional merge -->
+  <line x1="550" y1="205" x2="550" y2="230" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- ===== OPTIONAL MERGE ===== -->
+  <rect x="385" y="232" width="330" height="42" rx="8" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="6,3" filter="url(#shadowSmall)"/>
+  <text x="550" y="250" text-anchor="middle" fill="#64748b" font-size="12" font-style="italic">Optional: Merge Paired Reads (abstar)</text>
+  <text x="550" y="265" text-anchor="middle" fill="#94a3b8" font-size="10">Illumina / Element platforms</text>
+
+  <!-- Arrow merge → step 1 -->
+  <line x1="550" y1="274" x2="550" y2="305" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- ===== STEP 1: BARCODE PARSING ===== -->
+  <rect x="80" y="307" width="940" height="200" rx="12" fill="white" stroke="#667eea" stroke-width="2" filter="url(#shadow)"/>
+  <!-- Step number badge -->
+  <rect x="80" y="307" width="940" height="40" rx="12" fill="url(#step1Grad)"/>
+  <rect x="80" y="327" width="940" height="20" fill="url(#step1Grad)"/>
+  <text x="110" y="333" fill="white" font-size="15" font-weight="700">1</text>
+  <text x="135" y="333" fill="white" font-size="14" font-weight="600">BARCODE PARSING &amp; CORRECTION</text>
+  <text x="960" y="333" fill="#c3dafe" font-size="11" text-anchor="end" font-weight="500">parallel (chunks of 1000 reads)</text>
+
+  <!-- Read structure diagram -->
+  <text x="110" y="375" fill="#475569" font-size="12" font-weight="600">Read structure:</text>
+  <rect x="110" y="385" width="160" height="30" rx="4" fill="#667eea" opacity="0.15" stroke="#667eea" stroke-width="1"/>
+  <text x="190" y="405" text-anchor="middle" fill="#4c51bf" font-size="11" font-weight="600">Barcode (0–16)</text>
+  <rect x="270" y="385" width="120" height="30" rx="4" fill="#48bb78" opacity="0.15" stroke="#48bb78" stroke-width="1"/>
+  <text x="330" y="405" text-anchor="middle" fill="#276749" font-size="11" font-weight="600">UMI (16–26)</text>
+  <rect x="390" y="385" width="100" height="30" rx="4" fill="#a0aec0" opacity="0.15" stroke="#a0aec0" stroke-width="1"/>
+  <text x="440" y="405" text-anchor="middle" fill="#718096" font-size="11">Spacer</text>
+  <rect x="490" y="385" width="200" height="30" rx="4" fill="#ed8936" opacity="0.15" stroke="#ed8936" stroke-width="1"/>
+  <text x="590" y="405" text-anchor="middle" fill="#c05621" font-size="11" font-weight="600">cDNA (36+)</text>
+
+  <!-- Correction logic -->
+  <text x="110" y="445" fill="#475569" font-size="12" font-weight="600">Barcode correction (10x whitelist):</text>
+  <circle cx="125" cy="462" r="6" fill="#48bb78"/>
+  <text x="140" y="467" fill="#475569" font-size="11">Exact match → keep</text>
+  <circle cx="325" cy="462" r="6" fill="#ecc94b"/>
+  <text x="340" y="467" fill="#475569" font-size="11">Hamming dist = 1, unique → correct</text>
+  <circle cx="590" cy="462" r="6" fill="#e53e3e"/>
+  <text x="605" y="467" fill="#475569" font-size="11">Otherwise → discard</text>
+
+  <!-- Output tag -->
+  <rect x="830" y="470" width="170" height="26" rx="13" fill="#eef2ff" stroke="#667eea" stroke-width="1"/>
+  <text x="915" y="488" text-anchor="middle" fill="#4c51bf" font-size="11">→ parsed/*.parquet</text>
+
+  <!-- Arrow step1 → step2 -->
+  <line x1="550" y1="507" x2="550" y2="540" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- ===== STEP 2: PARTITION ===== -->
+  <rect x="200" y="542" width="700" height="100" rx="12" fill="white" stroke="#48bb78" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="200" y="542" width="700" height="38" rx="12" fill="url(#step2Grad)"/>
+  <rect x="200" y="562" width="700" height="18" fill="url(#step2Grad)"/>
+  <text x="230" y="568" fill="white" font-size="15" font-weight="700">2</text>
+  <text x="255" y="568" fill="white" font-size="14" font-weight="600">PARTITION BY BARCODE</text>
+
+  <text x="230" y="603" fill="#475569" font-size="12">Concatenate parquets → Group reads by corrected barcode (1 barcode = 1 droplet)</text>
+  <text x="230" y="623" fill="#475569" font-size="12">Filter: drop barcodes with &lt; <tspan font-weight="600">min_cluster_reads</tspan> total reads</text>
+
+  <!-- Arrow step2 → step3 -->
+  <line x1="550" y1="642" x2="550" y2="675" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- ===== STEP 3: PER-DROPLET PROCESSING ===== -->
+  <rect x="80" y="677" width="940" height="340" rx="12" fill="white" stroke="#ed8936" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="80" y="677" width="940" height="40" rx="12" fill="url(#step3Grad)"/>
+  <rect x="80" y="697" width="940" height="20" fill="url(#step3Grad)"/>
+  <text x="110" y="703" fill="white" font-size="15" font-weight="700">3</text>
+  <text x="135" y="703" fill="white" font-size="14" font-weight="600">PER-DROPLET PROCESSING</text>
+  <text x="960" y="703" fill="#feebc8" font-size="11" text-anchor="end" font-weight="500">parallel (per droplet)</text>
+
+  <!-- Sub-step A: Clustering -->
+  <rect x="120" y="730" width="260" height="120" rx="10" fill="#fff7ed" stroke="#ed8936" stroke-width="1.5" filter="url(#shadowSmall)"/>
+  <text x="140" y="755" fill="#c05621" font-size="13" font-weight="700">a) Greedy Clustering</text>
+  <text x="140" y="775" fill="#475569" font-size="11">Sort sequences by length</text>
+  <text x="140" y="793" fill="#475569" font-size="11">Edlib alignment (edit distance)</text>
+  <text x="140" y="811" fill="#475569" font-size="11">Identity threshold: <tspan font-weight="600">0.9</tspan></text>
+  <text x="140" y="835" fill="#9c4221" font-size="11" font-style="italic">Each cluster ≈ 1 antibody chain</text>
+
+  <!-- Arrow A → B -->
+  <line x1="380" y1="790" x2="425" y2="790" stroke="#ed8936" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Sub-step B: Consensus -->
+  <rect x="430" y="730" width="260" height="120" rx="10" fill="#fff7ed" stroke="#ed8936" stroke-width="1.5" filter="url(#shadowSmall)"/>
+  <text x="450" y="755" fill="#c05621" font-size="13" font-weight="700">b) Consensus Sequence</text>
+  <text x="450" y="775" fill="#475569" font-size="11">Partial Order Alignment</text>
+  <text x="450" y="793" fill="#475569" font-size="11">(SPOA / pyspoa)</text>
+  <text x="450" y="835" fill="#9c4221" font-size="11" font-style="italic">1 consensus per cluster</text>
+
+  <!-- Arrow B → C -->
+  <line x1="690" y1="790" x2="735" y2="790" stroke="#ed8936" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Sub-step C: Filtering -->
+  <rect x="740" y="730" width="250" height="120" rx="10" fill="#fff7ed" stroke="#ed8936" stroke-width="1.5" filter="url(#shadowSmall)"/>
+  <text x="760" y="755" fill="#c05621" font-size="13" font-weight="700">c) Cluster Filtering</text>
+  <text x="760" y="778" fill="#475569" font-size="11">reads ≥ <tspan font-weight="600">3</tspan></text>
+  <text x="760" y="796" fill="#475569" font-size="11">UMIs ≥ <tspan font-weight="600">1</tspan></text>
+  <text x="760" y="814" fill="#475569" font-size="11">fraction ≥ <tspan font-weight="600">0.0</tspan></text>
+
+  <!-- Droplet illustration -->
+  <text x="120" y="885" fill="#475569" font-size="12" font-weight="600">Within each droplet:</text>
+  <!-- Droplet circle -->
+  <ellipse cx="300" cy="950" rx="80" ry="50" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5" opacity="0.6"/>
+  <text x="300" y="938" text-anchor="middle" fill="#92400e" font-size="10">reads</text>
+  <text x="300" y="953" text-anchor="middle" fill="#92400e" font-size="10">from same</text>
+  <text x="300" y="968" text-anchor="middle" fill="#92400e" font-size="10">barcode</text>
+
+  <line x1="385" y1="950" x2="430" y2="930" stroke="#a0aec0" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="385" y1="950" x2="430" y2="970" stroke="#a0aec0" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Cluster bubbles -->
+  <ellipse cx="500" cy="925" rx="55" ry="22" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="500" y="930" text-anchor="middle" fill="#1e40af" font-size="10" font-weight="600">Heavy chain</text>
+  <ellipse cx="500" cy="975" rx="55" ry="22" fill="#fce7f3" stroke="#ec4899" stroke-width="1.5"/>
+  <text x="500" y="980" text-anchor="middle" fill="#9d174d" font-size="10" font-weight="600">Light chain</text>
+
+  <line x1="558" y1="925" x2="610" y2="925" stroke="#a0aec0" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="558" y1="975" x2="610" y2="975" stroke="#a0aec0" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Consensus result -->
+  <rect x="615" y="912" width="120" height="28" rx="4" fill="#dbeafe" stroke="#3b82f6" stroke-width="1"/>
+  <text x="675" y="931" text-anchor="middle" fill="#1e40af" font-size="10">H consensus</text>
+  <rect x="615" y="962" width="120" height="28" rx="4" fill="#fce7f3" stroke="#ec4899" stroke-width="1"/>
+  <text x="675" y="981" text-anchor="middle" fill="#9d174d" font-size="10">L consensus</text>
+
+  <!-- Output tags for step 3 -->
+  <rect x="800" y="930" width="180" height="24" rx="12" fill="#fff7ed" stroke="#ed8936" stroke-width="1"/>
+  <text x="890" y="947" text-anchor="middle" fill="#c05621" font-size="10">→ consensus/*.fasta</text>
+  <rect x="800" y="960" width="180" height="24" rx="12" fill="#fff7ed" stroke="#ed8936" stroke-width="1"/>
+  <text x="890" y="977" text-anchor="middle" fill="#c05621" font-size="10">→ metadata/*.csv</text>
+
+  <!-- Arrow step3 → step4 -->
+  <line x1="550" y1="1017" x2="550" y2="1050" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- ===== STEP 4: ANNOTATION ===== -->
+  <rect x="200" y="1052" width="700" height="110" rx="12" fill="white" stroke="#e53e3e" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="200" y="1052" width="700" height="38" rx="12" fill="url(#step4Grad)"/>
+  <rect x="200" y="1072" width="700" height="18" fill="url(#step4Grad)"/>
+  <text x="230" y="1078" fill="white" font-size="15" font-weight="700">4</text>
+  <text x="255" y="1078" fill="white" font-size="14" font-weight="600">V(D)J ANNOTATION</text>
+  <text x="840" y="1078" fill="#feb2b2" font-size="11" text-anchor="end" font-weight="500">abstar</text>
+
+  <text x="230" y="1113" fill="#475569" font-size="12">Germline gene assignment (V, D, J segments)</text>
+  <text x="230" y="1133" fill="#475569" font-size="12">CDR extraction • AIRR-formatted output • Receptor: BCR / TCR</text>
+
+  <!-- Output tag -->
+  <rect x="650" y="1120" width="230" height="26" rx="13" fill="#fff5f5" stroke="#e53e3e" stroke-width="1"/>
+  <text x="765" y="1138" text-anchor="middle" fill="#c53030" font-size="11">→ annotated/*_unpaired.tsv</text>
+
+  <!-- Arrow step4 → step5 -->
+  <line x1="550" y1="1162" x2="550" y2="1195" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- ===== STEP 5: PAIR ASSIGNMENT ===== -->
+  <rect x="200" y="1197" width="700" height="140" rx="12" fill="white" stroke="#9f7aea" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="200" y="1197" width="700" height="38" rx="12" fill="url(#step5Grad)"/>
+  <rect x="200" y="1217" width="700" height="18" fill="url(#step5Grad)"/>
+  <text x="230" y="1223" fill="white" font-size="15" font-weight="700">5</text>
+  <text x="255" y="1223" fill="white" font-size="14" font-weight="600">PAIR ASSIGNMENT</text>
+  <text x="840" y="1223" fill="#e9d8fd" font-size="11" text-anchor="end" font-weight="500">abutils</text>
+
+  <text x="230" y="1258" fill="#475569" font-size="12">Group annotated sequences by barcode</text>
+  <text x="230" y="1278" fill="#475569" font-size="12">Keep only: exactly <tspan font-weight="700" fill="#6b46c1">1 Heavy</tspan> + <tspan font-weight="700" fill="#6b46c1">1 Light</tspan> chain per droplet</text>
+
+  <!-- Pairing illustration -->
+  <rect x="510" y="1295" width="80" height="24" rx="4" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="550" y="1312" text-anchor="middle" fill="#1e40af" font-size="11" font-weight="600">Heavy</text>
+  <text x="605" y="1312" fill="#6b46c1" font-size="16" font-weight="700">+</text>
+  <rect x="625" y="1295" width="80" height="24" rx="4" fill="#fce7f3" stroke="#ec4899" stroke-width="1.5"/>
+  <text x="665" y="1312" text-anchor="middle" fill="#9d174d" font-size="11" font-weight="600">Light</text>
+  <text x="720" y="1312" fill="#6b46c1" font-size="14" font-weight="700">= Pair</text>
+
+  <!-- Output tag -->
+  <rect x="230" y="1295" width="220" height="26" rx="13" fill="#faf5ff" stroke="#9f7aea" stroke-width="1"/>
+  <text x="340" y="1313" text-anchor="middle" fill="#6b46c1" font-size="11">→ annotated/*_paired.tsv</text>
+
+  <!-- Arrow step5 → output -->
+  <line x1="550" y1="1337" x2="550" y2="1370" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- ===== OUTPUT ===== -->
+  <rect x="250" y="1372" width="600" height="120" rx="12" fill="url(#outputGrad)" filter="url(#shadow)"/>
+  <text x="550" y="1400" text-anchor="middle" fill="white" font-size="15" font-weight="700">OUTPUT</text>
+
+  <!-- Output directory structure -->
+  <text x="310" y="1425" fill="#94a3b8" font-size="12" font-family="'Consolas', 'Courier New', monospace">parsed/</text>
+  <text x="425" y="1425" fill="#667eea" font-size="11">Corrected barcodes</text>
+
+  <text x="310" y="1445" fill="#94a3b8" font-size="12" font-family="'Consolas', 'Courier New', monospace">consensus/</text>
+  <text x="425" y="1445" fill="#ed8936" font-size="11">Consensus FASTA</text>
+
+  <text x="310" y="1465" fill="#94a3b8" font-size="12" font-family="'Consolas', 'Courier New', monospace">metadata/</text>
+  <text x="425" y="1465" fill="#48bb78" font-size="11">Cluster statistics</text>
+
+  <text x="620" y="1425" fill="#94a3b8" font-size="12" font-family="'Consolas', 'Courier New', monospace">annotated/</text>
+  <text x="735" y="1425" fill="#e53e3e" font-size="11">AIRR (paired)</text>
+
+  <text x="620" y="1445" fill="#94a3b8" font-size="12" font-family="'Consolas', 'Courier New', monospace">annotated/</text>
+  <text x="735" y="1445" fill="#e53e3e" font-size="11">AIRR (unpaired)</text>
+
+  <text x="620" y="1465" fill="#94a3b8" font-size="12" font-family="'Consolas', 'Courier New', monospace">logs/</text>
+  <text x="735" y="1465" fill="#64748b" font-size="11">Processing logs</text>
+
+  <!-- Footer watermark -->
+  <text x="550" y="1510" text-anchor="middle" fill="#cbd5e1" font-size="10">PairPlex v0.2.0</text>
+</svg>
