@@ -18,6 +18,7 @@
 import multiprocessing as mp
 import os
 import time
+from contextlib import nullcontext
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -27,6 +28,7 @@ import polars as pl
 from natsort import natsorted
 from tqdm.auto import tqdm
 
+from . import qc as qc_mod
 from .provenance import RunLog, run_log_path
 from .utils import available_cpus, parse_barcodes, print_splash, process_droplet
 
@@ -51,6 +53,9 @@ def run(
     germline_database: str = "human",
     quiet: bool = False,
     debug: bool = False,
+    support_columns: bool = True,
+    qc: bool = True,
+    legacy: bool = False,
 ) -> list:
     """
     Run PairPlex.
@@ -111,6 +116,24 @@ def run(
     debug : bool
         If ``True``, all temporary files will be retained to ease debugging.
 
+    support_columns : bool
+        If ``True`` (default), the annotated outputs carry the cluster support of each contig:
+        ``umis``, ``reads``, ``cluster_fraction``, ``barcode`` and ``contig`` in the unpaired
+        outputs, ``umis:0/1``, ``reads:0/1``, ``cluster_fraction:0/1`` (etc.) in the paired outputs.
+        abstar's ``umi`` column, which is always null for PairPlex consensus contigs, is dropped.
+        Pairing is unchanged.
+
+    qc : bool
+        If ``True`` (default), write ``qc/stage_counts.csv`` (drop counts at every stage, per
+        well and in total), ``qc/annotation_failures.csv`` (abstar failure and exclusion modes)
+        and ``qc/report.json`` / ``qc/report.md`` (fragment fraction, UMI error signature,
+        ambient proxy, leakage by chain, pair confidence, clonal light-chain coherence).
+        Pairing is unchanged.
+
+    legacy : bool
+        If ``True``, reproduce PairPlex v2-base exactly: forces ``support_columns=False`` and
+        ``qc=False``.
+
 
     Returns
     -------
@@ -119,6 +142,9 @@ def run(
 
     """
     parameters = dict(locals())  # captured first: exactly the arguments of this call
+    if legacy:
+        support_columns = False
+        qc = False
 
     # print splash screen
     if not quiet:
@@ -218,6 +244,9 @@ def run(
         f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
     )
 
+    # QC accumulators (qc=True): per-well stage counts, abstar failure modes, fragments, UMI stats
+    qc_rows, qc_failures, qc_fragments, qc_umis, qc_wells = [], [], {}, [], []
+
     # initialize the Process Pool
     with ProcessPoolExecutor(
         max_workers=available_cpus(), mp_context=mp.get_context("spawn")
@@ -239,6 +268,10 @@ def run(
             input_file = Path(input_file)
             name = input_file.stem
             name_printer.set_description_str(f"---- {name} ----")
+            if qc:
+                wc = qc_mod.new_counts(name)
+                qc_rows.append(wc)
+                qc_wells.append(name)
 
             # check to make sure the input file is FASTA/Q (and not empty)
             if abutils.io.determine_fastx_format(str(input_file)) is None:
@@ -257,6 +290,8 @@ def run(
             for s in abutils.io.parse_fastx(str(input_file)):
                 input_count += 1
             seqs_printer.set_description_str(f"{input_count} input sequences")
+            if qc:
+                wc["input_reads"] = wc["dropped_orientation_or_barcode"] = input_count
 
             # split input file into chunks
             main_pbar.set_postfix_str("splitting input file", refresh=True)
@@ -297,6 +332,10 @@ def run(
             )
             df = pl.read_parquet(concat_parquet)
             seqs_with_barcodes = df.shape[0]
+            if qc:
+                wc.update(qc_mod.read_stage_counts(input_count, df))
+                wc.update(qc_mod.barcode_stage_counts(df, min_cluster_reads))
+                qc_umis.append(qc_mod.umi_hamming1_stats(df))
             all_valid_barcodes += seqs_with_barcodes
             valids_printer.set_description_str(
                 f"{seqs_with_barcodes} sequences with valid barcodes"
@@ -377,6 +416,12 @@ def run(
                 )
             metadata_df = pl.DataFrame(metadata)
             consensus_pbar.close()
+            if qc:
+                wc.update(
+                    qc_mod.cluster_stage_counts(
+                        metadata_df, min_cluster_reads, min_cluster_umis, min_cluster_fraction
+                    )
+                )
 
             # write metadata to file
             metadata_file = metadata_directory / f"{name}.csv"
@@ -415,12 +460,21 @@ def run(
             if consensus_count < 1000:
                 mmseqs_threads = 1
             # run abstar
-            sequences = abstar.run(
-                sequences=str(consensus_file),
-                germline_database=germline_database,
-                receptor=receptor,
-                mmseqs_threads=mmseqs_threads,
-            )
+            with qc_mod.capture_abstar_failures() if qc else nullcontext([]) as record_failures:
+                sequences = abstar.run(
+                    sequences=str(consensus_file),
+                    germline_database=germline_database,
+                    receptor=receptor,
+                    mmseqs_threads=mmseqs_threads,
+                )
+            if qc:
+                ann_df = qc_mod.annotation_frame(sequences)
+                n_rec = len(record_failures)
+                wc.update(qc_mod.annotation_stage_counts(ann_df, consensus_count, n_rec))
+                qc_failures.extend(qc_mod.annotation_failure_rows(name, ann_df, record_failures))
+                qc_mod.merge_fragment_counts(qc_fragments, qc_mod.fragment_counts(ann_df, n_rec))
+            if support_columns:
+                qc_mod.add_support_columns(sequences, metadata_df)
 
             if len(sequences) > 1: # A single sequence cannot be paired and will cause issues
                 
@@ -444,7 +498,11 @@ def run(
                 paired_airr_file = annotated_directory / f"{name}_paired.tsv"
                 paired_parquet_file = annotated_directory / f"{name}_paired.parquet"
                 pairs = abutils.tl.assign_pairs(sequences, delim="_", delim_occurance=-1)
+                if qc:
+                    wc.update(qc_mod.chain_composition_counts(pairs))
                 pairs = [p for p in pairs if len(p.heavies) == 1 and len(p.lights) == 1]
+                if qc:
+                    wc["emitted_pairs"] = len(pairs)
                 pairs_printer.set_description_str(f"{len(pairs)} paired sequences")
                 abutils.io.to_airr(pairs, str(paired_airr_file), drop_na_columns=False)
                 abutils.io.to_parquet(
@@ -480,6 +538,11 @@ def run(
 
             # update the main progress bar
             main_pbar.update(1)
+
+    if qc:
+        qc_mod.write_qc(
+            output_directory, qc_rows, qc_failures, qc_fragments, qc_umis, qc_wells
+        )
 
     run_log.finish(
         stats={

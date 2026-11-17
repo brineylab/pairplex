@@ -104,6 +104,21 @@ def version():
     is_flag=True,
     help="Whether to enable debug mode, which saves all temporary files to ease troubleshooting",
 )
+@click.option(
+    "--support_columns/--no_support_columns",
+    default=True,
+    help="Carry cluster support (umis, reads, cluster_fraction) into the annotated outputs",
+)
+@click.option(
+    "--qc/--no_qc",
+    default=True,
+    help="Write qc/stage_counts.csv, qc/annotation_failures.csv and qc/report.{json,md}",
+)
+@click.option(
+    "--legacy",
+    is_flag=True,
+    help="Reproduce PairPlex v2-base exactly (disables support columns and QC outputs)",
+)
 def run(
     sequences: str | Path,
     output_directory: str | Path,
@@ -120,6 +135,9 @@ def run(
     germline_database: str,
     quiet: bool,
     debug: bool,
+    support_columns: bool,
+    qc: bool,
+    legacy: bool,
 ):
     run_pairplex(
         sequences=sequences,
@@ -137,6 +155,9 @@ def run(
         germline_database=germline_database,
         quiet=quiet,
         debug=debug,
+        support_columns=support_columns,
+        qc=qc,
+        legacy=legacy,
     )
 
 
