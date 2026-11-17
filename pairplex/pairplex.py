@@ -50,6 +50,7 @@ def run(
     receptor: str = "bcr",
     germline_database: str = "human",
     mmseqs_threads: int = 1,
+    tso_g_max: int = 3,
     barcode_prefer_exact: bool = True,
     legacy: bool = False,
     quiet: bool = False,
@@ -114,6 +115,12 @@ def run(
         crashes when its thread count exceeds the size of an abstar sub-query batch. Annotation is not the
         bottleneck of a run, so ``1`` costs little. Does not change results.
 
+    tso_g_max : int
+        Maximum number of Gs removed from the start of the insert, after the fixed TSO prefix
+        ``TTTCTTATAT`` (read positions 26-35). The 10x TSO ends in rGrGrG, so the default is ``3``;
+        genuine 5' Gs of the transcript beyond the TSO's run are kept. v2-base removed every leading
+        G (``lstrip("G")``).
+
     barcode_prefer_exact : bool
         Read orientation choice. If ``True`` (default), an exact barcode whitelist hit in either orientation
         (forward or reverse complement) wins over a Hamming-1 correction in the other; corrections are used only
@@ -121,7 +128,8 @@ def run(
         the run log (``stats.barcode_orientation``). v2-base took the first orientation whose barcode corrected.
 
     legacy : bool
-        If ``True``, reproduce v2-base exactly: forces ``barcode_prefer_exact=False``.
+        If ``True``, reproduce v2-base exactly: forces ``tso_g_max`` to strip every leading G
+        (``lstrip("G")``) and ``barcode_prefer_exact=False``.
 
     quiet : bool
         Whether to suppress the progress bar and other update messages.
@@ -140,7 +148,10 @@ def run(
     if not isinstance(mmseqs_threads, int) or mmseqs_threads < 1:
         raise ValueError(f"mmseqs_threads must be a positive integer, got {mmseqs_threads!r}")
     if legacy:
+        tso_g_max = None  # v2-base: lstrip("G")
         barcode_prefer_exact = False  # v2-base: first orientation that corrects
+    elif not isinstance(tso_g_max, int) or tso_g_max < 0:
+        raise ValueError(f"tso_g_max must be a non-negative integer, got {tso_g_max!r}")
 
     # print splash screen
     if not quiet:
@@ -296,7 +307,7 @@ def run(
 
             main_pbar.set_postfix_str("parsing barcodes", refresh=True)
             parquet_chunks = []
-            parse_kwargs = {"whitelist_path": whitelist_path}
+            parse_kwargs = {"whitelist_path": whitelist_path, "tso_g_max": tso_g_max}
             if barcode_prefer_exact:
                 parse_kwargs.update(prefer_exact=True, return_counts=True)
             else:

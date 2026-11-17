@@ -137,3 +137,23 @@ def test_run_default_and_legacy(tmp_path, monkeypatch, whitelist):
     assert old["barcode"].to_list() == [A] * 6
     old2 = _run(tmp_path / "old2", monkeypatch, whitelist, barcode_prefer_exact=False)
     assert old2["barcode"].to_list() == [A] * 6
+
+
+# --- interaction with the TSO G-run fix (#15): every orientation path must use strip_tso_g ---
+
+
+@pytest.mark.parametrize("prefer_exact", [True, False])
+def test_tso_g_strip_applies_in_every_orientation_path(tmp_path, whitelist, prefer_exact):
+    """The read carries the TSO's GGG plus a genuine 5' G ("G" + INSERT). With tso_g_max=3 that G must
+    survive whichever orientation code path parses the read (exact-hit path or legacy first-hit path)."""
+    insert = "G" + INSERT
+    r = A + UMI_F + TSO + insert + rc(mut(B) + UMI_R + TSO)
+    df, _ = _parse(tmp_path / str(prefer_exact), whitelist, [r], prefer_exact=prefer_exact, tso_g_max=3)
+    assert df["barcode"].to_list() == [A]
+    assert df["sequence"][0].startswith(insert)
+
+
+def test_tso_g_legacy_lstrip_in_exact_path(tmp_path, whitelist):
+    r = A + UMI_F + TSO + "G" + INSERT + rc(mut(B) + UMI_R + TSO)
+    df, _ = _parse(tmp_path, whitelist, [r], prefer_exact=True, tso_g_max=None)
+    assert df["sequence"][0].startswith(INSERT)

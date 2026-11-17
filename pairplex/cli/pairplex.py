@@ -105,6 +105,12 @@ def version():
     help="Threads for MMseqs2 during annotation (always explicit; None made MMseqs2 use every node CPU and crash)",
 )
 @click.option(
+    "--tso_g_max",
+    type=click.IntRange(min=0),
+    default=3,
+    help="Maximum number of Gs stripped after the TSO prefix (the TSO's rGrGrG run); genuine 5' Gs are kept",
+)
+@click.option(
     "--barcode_prefer_exact/--no-barcode_prefer_exact",
     default=True,
     help="Prefer the read orientation with an exact barcode whitelist hit over a Hamming-1 correction in the other",
@@ -135,6 +141,7 @@ def run(
     receptor: str,
     germline_database: str,
     mmseqs_threads: int,
+    tso_g_max: int,
     barcode_prefer_exact: bool,
     legacy: bool,
     quiet: bool,
@@ -155,6 +162,7 @@ def run(
         receptor=receptor,
         germline_database=germline_database,
         mmseqs_threads=mmseqs_threads,
+        tso_g_max=tso_g_max,
         barcode_prefer_exact=barcode_prefer_exact,
         legacy=legacy,
         quiet=quiet,
