@@ -98,6 +98,12 @@ def version():
     default="human",
     help="Germline database for V(D)J assignment",
 )
+@click.option(
+    "--mmseqs_threads",
+    type=click.IntRange(min=1),
+    default=1,
+    help="Threads for MMseqs2 during annotation (always explicit; None made MMseqs2 use every node CPU and crash)",
+)
 @click.option("--quiet", is_flag=True, help="Whether to suppress output")
 @click.option(
     "--debug",
@@ -118,6 +124,7 @@ def run(
     merge_paired_reads: bool,
     receptor: str,
     germline_database: str,
+    mmseqs_threads: int,
     quiet: bool,
     debug: bool,
 ):
@@ -135,6 +142,7 @@ def run(
         merge_paired_reads=merge_paired_reads,
         receptor=receptor,
         germline_database=germline_database,
+        mmseqs_threads=mmseqs_threads,
         quiet=quiet,
         debug=debug,
     )
