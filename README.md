@@ -77,6 +77,18 @@ pairplex.run(
 
 <br>
 
+## Benchmarking with SimPlex
+
+This repo ships **[SimPlex](./simplex/README.md)** (`import simplex`), a companion simulator for split-emulsion (overloaded 10x + well split) libraries. It generates synthetic raw reads with **known ground truth** and models the physical processes that cause mispairing: droplet overloading, pre-split leakage of barcoded cDNA out of cells, ambient mRNA, UMI and sequencing errors, and 5′-truncated fragments. It also runs PairPlex on the reads and **scores** the output: precision, cell recall, why each lost cell was lost, and precision by confidence for pooled pairing.
+
+Use it to measure what a PairPlex change or setting does on data that resembles your libraries before changing a production run. `simplex.PRINCEPS_2025` is a calibrated profile for a heavily overloaded reaction with high leakage; tune it to your own measurements. Threshold sweeps under the legacy v1 settings do not transfer to high-leakage libraries (see the SimPlex README).
+
+For split-emulsion libraries, `pairplex pair-pooled` pairs heavy and light chains across all wells by barcode. It assigns each chain a home well and reports a confidence for every pair.
+
+See **[`simplex/README.md`](./simplex/README.md)** for what it simulates, the available knobs and their expected effects, and how to interpret the scored results.
+
+<br>
+
 ## Citation
 If you are using Pairplex or the dataset generated of paired antibody sequences, please cite:
 

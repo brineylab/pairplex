@@ -176,3 +176,6 @@ cython_debug/
 pairplex/utils.py.bak
 pairplex/pairplex.py.bak
 .DS_Store
+
+# Local investigation / scratch notes (not for git)
+INVESTIGATION_NOTES.md

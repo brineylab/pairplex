@@ -50,7 +50,7 @@ test = [
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["pairplex*"]
+include = ["pairplex*", "simplex*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "pairplex.version.__version__" }
