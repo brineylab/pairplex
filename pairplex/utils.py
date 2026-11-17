@@ -29,6 +29,7 @@ import polars as pl
 from natsort import natsorted
 from spoa import poa
 
+from .umi import collapse_umis_directional
 from .version import __version__
 
 BARCODE_DIR = Path(__file__).resolve().parent / "barcodes"
@@ -333,6 +334,7 @@ def process_droplet(
     min_cluster_reads: int = 3,
     min_cluster_umis: int = 2,
     min_cluster_fraction: float = 0.0,
+    umi_collapse: str = "directional",
     quiet: bool = False,
     debug: bool = False,
 ) -> list[dict]:
@@ -365,6 +367,14 @@ def process_droplet(
     min_cluster_fraction : float
         Minimum fraction of reads in a cluster.
 
+    umi_collapse : str
+        UMI error correction applied to the whole droplet (all reads of this barcode in this well)
+        before any counting. ``"directional"`` (default) collapses UMIs with the UMI-tools
+        directional method (see :mod:`pairplex.umi`): the raw UMI of each read is kept in
+        ``umi_raw``, ``umi`` becomes the corrected representative, the metadata ``umis`` is the
+        corrected count and ``umis_raw`` the count before collapsing. ``"none"`` keeps raw UMIs and
+        the v2-base metadata layout (no ``umis_raw`` column).
+
     quiet : bool
         Whether to suppress output.
 
@@ -380,6 +390,16 @@ def process_droplet(
     temp_directory = Path(temp_directory)
     barcode = name.split("_")[-1]
     metadata = []
+
+    # UMI error correction, per (well, barcode): this partition is exactly one barcode of one well
+    if umi_collapse == "directional":
+        mapping = collapse_umis_directional(partition_df["umi"].to_list())
+        partition_df = partition_df.with_columns(
+            pl.col("umi").alias("umi_raw"),
+            pl.col("umi").replace_strict(mapping, return_dtype=pl.String).alias("umi"),
+        )
+    elif umi_collapse != "none":
+        raise ValueError(f"unknown umi_collapse: {umi_collapse!r}")
 
     # sequences = abutils.io.from_polars(
     #     partition_df, id_key="seq_id", sequence_key="sequence"
@@ -398,6 +418,8 @@ def process_droplet(
         contig_name = f"{barcode}_contig-{i}"
         cluster_df = partition_df.filter(pl.col("seq_id").is_in(clust))
         n_umis = len(cluster_df["umi"].unique())
+        if umi_collapse != "none":
+            n_umis_raw = len(cluster_df["umi_raw"].unique())
         cluster_fraction = len(clust) / partition_df.shape[0]
 
         # consensus
@@ -417,6 +439,10 @@ def process_droplet(
             "name": contig_name,
             "reads": len(clust),
             "umis": n_umis,
+        }
+        if umi_collapse != "none":
+            meta["umis_raw"] = n_umis_raw
+        meta |= {
             "cluster_fraction": cluster_fraction,
             "consensus": consensus,
         }

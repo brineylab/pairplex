@@ -49,6 +49,8 @@ def run(
     merge_paired_reads: bool = False,
     receptor: str = "bcr",
     germline_database: str = "human",
+    umi_collapse: str = "directional",
+    legacy: bool = False,
     quiet: bool = False,
     debug: bool = False,
 ) -> list:
@@ -105,6 +107,19 @@ def run(
         The germline database to use. Options are anything accepted by `abstar.run`, including
         custom databases if available.
 
+    umi_collapse : str
+        UMI error correction, applied within each (well, droplet barcode) before any UMI counting.
+        ``"directional"`` (default) uses the UMI-tools directional adjacency method: UMI ``b`` is
+        absorbed by UMI ``a`` when they differ at one position and ``reads(a) >= 2 * reads(b) - 1``,
+        transitively, processing UMIs by descending read count (see :mod:`pairplex.umi`, which also
+        documents how UMIs containing ``N`` are handled). The metadata ``umis`` column is then the
+        corrected count, a ``umis_raw`` column holds the count before collapsing, and
+        ``min_cluster_umis`` filters on corrected counts. ``"none"`` counts raw UMIs (v2-base
+        behaviour, no ``umis_raw`` column).
+
+    legacy : bool
+        If ``True``, reproduce the v2-base behaviour exactly: forces ``umi_collapse="none"``.
+
     quiet : bool
         Whether to suppress the progress bar and other update messages.
 
@@ -119,6 +134,15 @@ def run(
 
     """
     parameters = dict(locals())  # captured first: exactly the arguments of this call
+
+    # legacy mode forces every v2 behaviour option to its v2-base value
+    if legacy:
+        umi_collapse = "none"
+    if umi_collapse not in ("directional", "none"):
+        raise ValueError(
+            f"umi_collapse must be 'directional' or 'none', got {umi_collapse!r}"
+        )
+    parameters["umi_collapse_effective"] = umi_collapse
 
     # print splash screen
     if not quiet:
@@ -346,6 +370,7 @@ def run(
                 "min_cluster_fraction": min_cluster_fraction,
                 "consensus_downsample": consensus_downsample,
                 "clustering_threshold": clustering_threshold,
+                "umi_collapse": umi_collapse,
                 "quiet": quiet,
                 "debug": debug,
             }

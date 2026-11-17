@@ -98,6 +98,18 @@ def version():
     default="human",
     help="Germline database for V(D)J assignment",
 )
+@click.option(
+    "--umi-collapse",
+    "umi_collapse",
+    type=click.Choice(["directional", "none"]),
+    default="directional",
+    help="UMI error correction within each (well, barcode): UMI-tools directional (default) or none",
+)
+@click.option(
+    "--legacy",
+    is_flag=True,
+    help="Reproduce v2-base behaviour exactly (forces --umi-collapse none)",
+)
 @click.option("--quiet", is_flag=True, help="Whether to suppress output")
 @click.option(
     "--debug",
@@ -118,6 +130,8 @@ def run(
     merge_paired_reads: bool,
     receptor: str,
     germline_database: str,
+    umi_collapse: str,
+    legacy: bool,
     quiet: bool,
     debug: bool,
 ):
@@ -135,6 +149,8 @@ def run(
         merge_paired_reads=merge_paired_reads,
         receptor=receptor,
         germline_database=germline_database,
+        umi_collapse=umi_collapse,
+        legacy=legacy,
         quiet=quiet,
         debug=debug,
     )
