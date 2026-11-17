@@ -104,6 +104,20 @@ def version():
     is_flag=True,
     help="Whether to enable debug mode, which saves all temporary files to ease troubleshooting",
 )
+@click.option(
+    "--pooling",
+    type=click.Choice(["per_well", "across_wells"]),
+    default="per_well",
+    help="per_well: process each well on its own. across_wells: pool reads by droplet barcode across wells, "
+    "collapse UMIs across wells and pair by shared home well (writes pairs/pairs.parquet)",
+)
+@click.option(
+    "--crosswell_shards",
+    type=int,
+    default=None,
+    help="across_wells only: number of on-disk barcode shards (default: ~1 per 160 MB of gzipped input)",
+)
+@click.option("--legacy", is_flag=True, help="Reproduce v2-base behaviour exactly (forces --pooling per_well)")
 def run(
     sequences: str | Path,
     output_directory: str | Path,
@@ -120,6 +134,9 @@ def run(
     germline_database: str,
     quiet: bool,
     debug: bool,
+    pooling: str,
+    crosswell_shards: int | None,
+    legacy: bool,
 ):
     run_pairplex(
         sequences=sequences,
@@ -137,6 +154,9 @@ def run(
         germline_database=germline_database,
         quiet=quiet,
         debug=debug,
+        pooling=pooling,
+        crosswell_shards=crosswell_shards,
+        legacy=legacy,
     )
 
 

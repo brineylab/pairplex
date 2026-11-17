@@ -51,6 +51,9 @@ def run(
     germline_database: str = "human",
     quiet: bool = False,
     debug: bool = False,
+    pooling: str = "per_well",
+    crosswell_shards: int | None = None,
+    legacy: bool = False,
 ) -> list:
     """
     Run PairPlex.
@@ -111,6 +114,26 @@ def run(
     debug : bool
         If ``True``, all temporary files will be retained to ease debugging.
 
+    pooling : str
+        ``"per_well"`` (default): process each input file (one well) on its own, as before.
+        ``"across_wells"``: cross-well mode (see ``pairplex.crosswell``). Reads of all wells of a
+        reaction are pooled by droplet barcode (well = last integer in each file stem), UMIs are
+        collapsed per barcode across wells (UMI-tools directional adjacency), each barcode's reads
+        are clustered once with the legacy greedy clustering, each molecule is assigned to the
+        well holding most of its reads, and heavy/light are paired by shared home well with
+        ``pooled_pairing.pair_pooled`` (leakage estimated from the data). In this mode
+        ``min_cluster_umis`` counts corrected UMIs and ``min_cluster_reads`` /
+        ``min_cluster_fraction`` apply to pooled reads. Writes ``pairs/pairs.parquet``,
+        ``contigs/contigs.parquet`` and ``contigs/contig_wells.parquet`` instead of the per-well
+        ``parsed/``, ``metadata/``, ``consensus/`` and ``annotated/`` files.
+
+    crosswell_shards : int | None
+        Cross-well mode only: number of on-disk barcode shards (memory scales with one shard).
+        ``None`` picks about one shard per 160 MB of gzipped input (~1M reads).
+
+    legacy : bool
+        If ``True``, reproduce ``v2-base`` behaviour exactly: forces ``pooling="per_well"``.
+
 
     Returns
     -------
@@ -119,6 +142,11 @@ def run(
 
     """
     parameters = dict(locals())  # captured first: exactly the arguments of this call
+    if legacy:
+        pooling = "per_well"
+    if pooling not in ("per_well", "across_wells"):
+        raise ValueError(f"pooling must be 'per_well' or 'across_wells', not {pooling!r}")
+    per_well = pooling == "per_well"
 
     # print splash screen
     if not quiet:
@@ -139,10 +167,11 @@ def run(
     output_directory.mkdir(parents=True, exist_ok=True)
     temp_directory.mkdir(parents=True, exist_ok=True)
     log_directory.mkdir(parents=True, exist_ok=True)
-    parsed_directory.mkdir(parents=True, exist_ok=True)
-    consensus_directory.mkdir(parents=True, exist_ok=True)
-    metadata_directory.mkdir(parents=True, exist_ok=True)
-    annotated_directory.mkdir(parents=True, exist_ok=True)
+    if per_well:
+        parsed_directory.mkdir(parents=True, exist_ok=True)
+        consensus_directory.mkdir(parents=True, exist_ok=True)
+        metadata_directory.mkdir(parents=True, exist_ok=True)
+        annotated_directory.mkdir(parents=True, exist_ok=True)
 
     # process input files
     if isinstance(sequences, str | Path):
@@ -198,6 +227,27 @@ def run(
             show_progress=True,
         )
         print("\n")
+
+    if not per_well:
+        from .crosswell import run_crosswell
+
+        run_crosswell(
+            input_files,
+            output_directory,
+            temp_directory,
+            run_log,
+            whitelist_path=whitelist_path,
+            clustering_threshold=clustering_threshold,
+            min_cluster_reads=min_cluster_reads,
+            min_cluster_umis=min_cluster_umis,
+            min_cluster_fraction=min_cluster_fraction,
+            receptor=receptor,
+            germline_database=germline_database,
+            n_shards=crosswell_shards,
+            quiet=quiet,
+            debug=debug,
+        )
+        return
 
     # setup the main progress bar (tracks input file completion)
     main_pbar = tqdm(
