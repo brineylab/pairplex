@@ -11,7 +11,7 @@ cat ~/work/PairPlex/bench/runs/NAME/STATUS          # queued / running slotN / D
 
 - `REF` is a branch, tag or commit in the shared repo (local refs are visible from every worktree; `origin/REF` is tried second). The code is snapshotted with `git archive`, so only **committed** changes are tested.
 - `NAME` must be new; results go to `~/work/PairPlex/bench/runs/NAME/<dataset>/{metrics.json,run.log,score.log,STATUS}`.
-- Jobs run on the high-CPU pod (240 cores) in tmux. At most **N benchmarks** run at once, with N in `~/work/PairPlex/bench/slots` (currently 3; the pod is shared with other agents, so the coordinator sets it). The rest queue. Each runs its datasets in parallel with 30 PairPlex workers each (the high-CPU pod is ours).
+- Jobs run on the high-CPU pod (240 cores) in tmux. At most **N benchmarks** run at once, with N in `~/work/PairPlex/bench/slots` (currently 3; the pod is shared with other agents, so the coordinator sets it). The rest queue. Each runs its datasets in parallel with 15 PairPlex workers each (peak 60 per run during parse/cluster bursts; annotation is serial).
 - Typical time: sims about 17 min each; real subsets about 2.5 h each, so a full run takes about 2.5 h.
 - **Simulations choose, full-size real runs validate:** explore with `sim_cal,sim_imp`, then validate the final candidate on all 4 datasets. Never shrink the real subsets.
 

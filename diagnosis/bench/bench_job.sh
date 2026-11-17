@@ -2,7 +2,8 @@
 # (bench_job.sh: the job script copied into each run folder by submit.sh; edit freely, running jobs use their copy)
 # PairPlex v2 benchmark: run one git ref on the frozen datasets and score it.
 # Runs ON the high-CPU pod (use submit.sh from anywhere). At most N benchmarks run at once
-# (N in ~/work/PairPlex/bench/slots; slot locks); each runs its 4 datasets in parallel with 30 workers each (high-CPU pod is ours: 240 cores, 1 TB).
+# (N in ~/work/PairPlex/bench/slots; slot locks); each runs its 4 datasets in parallel with 15 workers each
+# (60 per run at peak; the parse/cluster phases burst, annotation is serial).
 #
 #   bench.sh REF NAME [KWARGS_JSON] [DATASETS]
 #     REF       branch, tag or commit in ~/work/Software/pairplex (local refs, then origin/REF)
@@ -51,7 +52,7 @@ cat > $RUN/run.json <<EOF
 EOF
 
 # ---- datasets -----------------------------------------------------------------------------
-export PAIRPLEX_MAX_WORKERS=30 OMP_NUM_THREADS=2 POLARS_MAX_THREADS=2 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export PAIRPLEX_MAX_WORKERS=15 OMP_NUM_THREADS=2 POLARS_MAX_THREADS=2 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 run_one() {
   local ds=$1 reads kind truth=""
   case $ds in
