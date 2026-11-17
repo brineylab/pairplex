@@ -49,6 +49,7 @@ def run(
     merge_paired_reads: bool = False,
     receptor: str = "bcr",
     germline_database: str = "human",
+    mmseqs_threads: int = 1,
     quiet: bool = False,
     debug: bool = False,
 ) -> list:
@@ -105,6 +106,12 @@ def run(
         The germline database to use. Options are anything accepted by `abstar.run`, including
         custom databases if available.
 
+    mmseqs_threads : int
+        Number of threads MMseqs2 uses inside ``abstar.run``. Defaults to ``1``. Always passed explicitly: with
+        ``None`` MMseqs2 uses every online CPU of the node (ignoring ``OMP_NUM_THREADS`` and CPU affinity) and
+        crashes when its thread count exceeds the size of an abstar sub-query batch. Annotation is not the
+        bottleneck of a run, so ``1`` costs little. Does not change results.
+
     quiet : bool
         Whether to suppress the progress bar and other update messages.
 
@@ -119,6 +126,8 @@ def run(
 
     """
     parameters = dict(locals())  # captured first: exactly the arguments of this call
+    if not isinstance(mmseqs_threads, int) or mmseqs_threads < 1:
+        raise ValueError(f"mmseqs_threads must be a positive integer, got {mmseqs_threads!r}")
 
     # print splash screen
     if not quiet:
@@ -409,12 +418,8 @@ def run(
             # failsafe for empty consensus files
             if consensus_count <= 1 or os.path.getsize(consensus_file) == 0: # Changed consensus_count to include 1 (a single sequence can't be paired)
                 continue
-            # guard against MMSeqs threading issues with small datasets
             consensus_count = filtered_df.shape[0]
-            mmseqs_threads = None
-            if consensus_count < 1000:
-                mmseqs_threads = 1
-            # run abstar
+            # run abstar (always with an explicit MMseqs2 thread count, see docstring)
             sequences = abstar.run(
                 sequences=str(consensus_file),
                 germline_database=germline_database,
