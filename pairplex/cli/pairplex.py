@@ -104,6 +104,17 @@ def version():
     default=1,
     help="Threads for MMseqs2 during annotation (always explicit; None made MMseqs2 use every node CPU and crash)",
 )
+@click.option(
+    "--tso_g_max",
+    type=click.IntRange(min=0),
+    default=3,
+    help="Maximum number of Gs stripped after the TSO prefix (the TSO's rGrGrG run); genuine 5' Gs are kept",
+)
+@click.option(
+    "--legacy",
+    is_flag=True,
+    help="Reproduce v2-base behaviour exactly (overrides the options of newer fixes)",
+)
 @click.option("--quiet", is_flag=True, help="Whether to suppress output")
 @click.option(
     "--debug",
@@ -125,6 +136,8 @@ def run(
     receptor: str,
     germline_database: str,
     mmseqs_threads: int,
+    tso_g_max: int,
+    legacy: bool,
     quiet: bool,
     debug: bool,
 ):
@@ -143,6 +156,8 @@ def run(
         receptor=receptor,
         germline_database=germline_database,
         mmseqs_threads=mmseqs_threads,
+        tso_g_max=tso_g_max,
+        legacy=legacy,
         quiet=quiet,
         debug=debug,
     )

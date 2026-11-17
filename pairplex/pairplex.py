@@ -50,6 +50,8 @@ def run(
     receptor: str = "bcr",
     germline_database: str = "human",
     mmseqs_threads: int = 1,
+    tso_g_max: int = 3,
+    legacy: bool = False,
     quiet: bool = False,
     debug: bool = False,
 ) -> list:
@@ -112,6 +114,15 @@ def run(
         crashes when its thread count exceeds the size of an abstar sub-query batch. Annotation is not the
         bottleneck of a run, so ``1`` costs little. Does not change results.
 
+    tso_g_max : int
+        Maximum number of Gs removed from the start of the insert, after the fixed TSO prefix
+        ``TTTCTTATAT`` (read positions 26-35). The 10x TSO ends in rGrGrG, so the default is ``3``;
+        genuine 5' Gs of the transcript beyond the TSO's run are kept. v2-base removed every leading
+        G (``lstrip("G")``).
+
+    legacy : bool
+        If ``True``, reproduce v2-base exactly: forces ``tso_g_max`` to strip every leading G.
+
     quiet : bool
         Whether to suppress the progress bar and other update messages.
 
@@ -128,6 +139,10 @@ def run(
     parameters = dict(locals())  # captured first: exactly the arguments of this call
     if not isinstance(mmseqs_threads, int) or mmseqs_threads < 1:
         raise ValueError(f"mmseqs_threads must be a positive integer, got {mmseqs_threads!r}")
+    if legacy:
+        tso_g_max = None  # v2-base: lstrip("G")
+    elif not isinstance(tso_g_max, int) or tso_g_max < 0:
+        raise ValueError(f"tso_g_max must be a non-negative integer, got {tso_g_max!r}")
 
     # print splash screen
     if not quiet:
@@ -284,7 +299,11 @@ def run(
             parquet_chunks = []
             futures = [
                 executor.submit(
-                    parse_barcodes, chunk, temp_directory, whitelist_path=whitelist_path
+                    parse_barcodes,
+                    chunk,
+                    temp_directory,
+                    whitelist_path=whitelist_path,
+                    tso_g_max=tso_g_max,
                 )
                 for chunk in fastq_chunks
             ]
