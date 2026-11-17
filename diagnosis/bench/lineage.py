@@ -106,14 +106,14 @@ def retention(base: pl.DataFrame, new: pl.DataFrame) -> dict:
     return out
 
 
-def compare_lineages(new_run: str, base_run: str = "v2-base", datasets=("real_d02", "real_d07")) -> dict:
+def compare_lineages(new_run: str, base_run: str = "v2-base", datasets=("real_d02", "real_d07"), pairs_vs: str = "pooled") -> dict:
     res = {}
     for ds in datasets:
         for s in ("per_well", "pooled", "pairs"):
             new = load_set(new_run, ds, s)
             if new is None:
                 continue
-            bs = s if load_set(base_run, ds, s) is not None else ("pooled" if s == "pairs" else None)
+            bs = s if load_set(base_run, ds, s) is not None else (pairs_vs if s == "pairs" else None)
             base = load_set(base_run, ds, bs) if bs else None
             if base is None:
                 continue

@@ -49,13 +49,15 @@ def main():
     ap.add_argument("name")
     ap.add_argument("--baseline", default="v2-base")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--pairs-vs", default="pooled", choices=["pooled", "per_well"],
+                    help="baseline set to compare a branch 'pairs' set with (per_well for branches whose pairs/ are per-well pairs, e.g. scored pairing)")
     a = ap.parse_args()
     new, base = load(a.name), load(a.baseline)
     rows, verdicts = [], []
     for ds in sorted(set(new) | set(base)):
         n, b = new.get(ds, {}), base.get(ds, {})
         for s in SETS:
-            bs = s if s in b else ("pooled" if s == "pairs" else None)
+            bs = s if s in b else (a.pairs_vs if s == "pairs" else None)
             if s not in n:
                 continue
             if ds.startswith("sim"):
@@ -99,7 +101,7 @@ def main():
     # lineage retention on real memory reactions (report + REVIEW flag, not part of the pass rule)
     try:
         from lineage import SIZES, compare_lineages
-        lin = compare_lineages(a.name, a.baseline, [d for d in ("real_d02", "real_d07") if d in new and d in base])
+        lin = compare_lineages(a.name, a.baseline, [d for d in ("real_d02", "real_d07") if d in new and d in base], a.pairs_vs)
     except Exception as e:  # never let the report break the verdict
         lin, SIZES = {}, ()
         print(f"\n(lineage report failed: {e})")
