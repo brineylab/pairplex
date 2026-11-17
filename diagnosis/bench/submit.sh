@@ -9,6 +9,8 @@ RUN=/home/jovyan/work/PairPlex/bench/runs/$NAME
 if [ -e "$RUN/run.json" ] || grep -qs . "$RUN/STATUS"; then echo "run $NAME exists; pick another NAME" >&2; exit 1; fi
 mkdir -p "$RUN"
 printf '%s' "$KWARGS" > "$RUN/kwargs.json"
+# each job runs its own frozen copy: editing bench.sh later cannot break it (NFS stale handles)
+cp /home/jovyan/work/Software/pairplex/diagnosis/bench/bench.sh "$RUN/bench.sh"
 ssh -F /home/jovyan/.ssh/config -o BatchMode=yes highcpu \
-  "tmux new-session -d -s bench_$NAME 'bash /home/jovyan/work/Software/pairplex/diagnosis/bench/bench.sh $REF $NAME @$RUN/kwargs.json $DATASETS > $RUN/bench.log 2>&1'"
+  "tmux new-session -d -s bench_$NAME 'bash $RUN/bench.sh $REF $NAME @$RUN/kwargs.json $DATASETS > $RUN/bench.log 2>&1'"
 echo "submitted $NAME ($REF); status: $RUN/STATUS"
