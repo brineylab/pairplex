@@ -1,7 +1,7 @@
 #!/bin/bash
 # PairPlex v2 benchmark: run one git ref on the frozen datasets and score it.
 # Runs ON the high-CPU pod (use submit.sh from anywhere). At most 2 benchmarks run at once
-# (slot locks); each runs its 4 datasets in parallel with 30 workers each (120 cores).
+# (slot locks); each runs its 4 datasets in parallel with 30 workers each (high-CPU pod is ours: 240 cores, 1 TB).
 #
 #   bench.sh REF NAME [KWARGS_JSON] [DATASETS]
 #     REF       branch, tag or commit in ~/work/Software/pairplex (local refs, then origin/REF)

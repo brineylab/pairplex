@@ -11,7 +11,7 @@ cat ~/work/PairPlex/bench/runs/NAME/STATUS          # queued / running slotN / D
 
 - `REF` is a branch, tag or commit in the shared repo (local refs are visible from every worktree; `origin/REF` is tried second). The code is snapshotted with `git archive`, so only **committed** changes are tested.
 - `NAME` must be new; results go to `~/work/PairPlex/bench/runs/NAME/<dataset>/{metrics.json,run.log,score.log,STATUS}`.
-- Jobs run on the high-CPU pod (240 cores) in tmux. At most **2 benchmarks** run at once (slot locks); the rest queue. Each runs its datasets in parallel with 30 PairPlex workers each.
+- Jobs run on the high-CPU pod (240 cores) in tmux. At most **2 benchmarks** run at once (slot locks); the rest queue. Each runs its datasets in parallel with 30 PairPlex workers each (the high-CPU pod is ours).
 - Typical time: sims ~30 min, real subsets ~1–1.5 h.
 
 ## Datasets
