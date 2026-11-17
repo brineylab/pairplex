@@ -50,7 +50,7 @@ test = [
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["pairplex*", "simplex*"]
+include = ["pairplex*"]  # simplex/ lives in the repo (benchmarking) but is not shipped
 
 [tool.setuptools.dynamic]
 version = { attr = "pairplex.version.__version__" }
