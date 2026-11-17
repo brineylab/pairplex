@@ -98,6 +98,16 @@ def version():
     default="human",
     help="Germline database for V(D)J assignment",
 )
+@click.option(
+    "--barcode_prefer_exact/--no-barcode_prefer_exact",
+    default=True,
+    help="Prefer the read orientation with an exact barcode whitelist hit over a Hamming-1 correction in the other",
+)
+@click.option(
+    "--legacy",
+    is_flag=True,
+    help="Reproduce v2-base behaviour exactly (overrides the options of newer fixes)",
+)
 @click.option("--quiet", is_flag=True, help="Whether to suppress output")
 @click.option(
     "--debug",
@@ -118,6 +128,8 @@ def run(
     merge_paired_reads: bool,
     receptor: str,
     germline_database: str,
+    barcode_prefer_exact: bool,
+    legacy: bool,
     quiet: bool,
     debug: bool,
 ):
@@ -135,6 +147,8 @@ def run(
         merge_paired_reads=merge_paired_reads,
         receptor=receptor,
         germline_database=germline_database,
+        barcode_prefer_exact=barcode_prefer_exact,
+        legacy=legacy,
         quiet=quiet,
         debug=debug,
     )
