@@ -98,6 +98,17 @@ def version():
     default="human",
     help="Germline database for V(D)J assignment",
 )
+@click.option(
+    "--tso_g_max",
+    type=click.IntRange(min=0),
+    default=3,
+    help="Maximum number of Gs stripped after the TSO prefix (the TSO's rGrGrG run); genuine 5' Gs are kept",
+)
+@click.option(
+    "--legacy",
+    is_flag=True,
+    help="Reproduce v2-base behaviour exactly (overrides the options of newer fixes)",
+)
 @click.option("--quiet", is_flag=True, help="Whether to suppress output")
 @click.option(
     "--debug",
@@ -118,6 +129,8 @@ def run(
     merge_paired_reads: bool,
     receptor: str,
     germline_database: str,
+    tso_g_max: int,
+    legacy: bool,
     quiet: bool,
     debug: bool,
 ):
@@ -135,6 +148,8 @@ def run(
         merge_paired_reads=merge_paired_reads,
         receptor=receptor,
         germline_database=germline_database,
+        tso_g_max=tso_g_max,
+        legacy=legacy,
         quiet=quiet,
         debug=debug,
     )
