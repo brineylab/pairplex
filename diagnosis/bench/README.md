@@ -28,6 +28,7 @@ cat ~/work/PairPlex/bench/runs/NAME/STATUS          # queued / running slotN / D
 - real: clonal purity drops by ≤1 point;
 - runtime: total PairPlex time ≤1.5× baseline.
 - a set identical to the baseline is reported SAME and accepted (neutral by design).
+- **lineage retention** (`lineage.py`, printed by `compare.py` for the real memory reactions): baseline expanded clones (heavy V+J+CDRH3 aa, ≥3/5/10 cells), with cells recovered, lineages lost and light coherence. A lost lineage of ≥5 cells is flagged **REVIEW** (listed, not an automatic fail, since baseline clones include ambient pseudo-lineages). The cells-recovered ratio is reported only, until its normal range is known.
 
 ## Contract with branches
 1. **Entry point:** `pairplex.pairplex.run(reads, output_directory, quiet=True, **kwargs)`. New behaviour is selected through keyword arguments; `legacy=True` must reproduce `v2-base` output.

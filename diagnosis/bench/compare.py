@@ -15,6 +15,8 @@ import argparse
 import json
 from pathlib import Path
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 RUNS = Path("/home/jovyan/work/PairPlex/bench/runs")
 SETS = ("per_well", "pooled", "pairs")
 TOL = 0.01
@@ -94,7 +96,25 @@ def main():
             print(f"   {k:<15} {fmt(ref.get(k)):>10} -> {fmt(cur[k]):>10}")
     print(f"\nruntime: {t_base}s -> {t_new}s ({'PASS' if rt_ok else 'FAIL' if rt_ok is False else 'n/a'}, limit 1.5x)")
     overall = all(v in (True, "same") for v in verdicts) and rt_ok is not False and bool(verdicts)
-    print(f"OVERALL: {'PASS' if overall else 'FAIL'}  (a set passes on its own rule; every scored set must pass)")
+    # lineage retention on real memory reactions (report + REVIEW flag, not part of the pass rule)
+    try:
+        from lineage import SIZES, compare_lineages
+        lin = compare_lineages(a.name, a.baseline, [d for d in ("real_d02", "real_d07") if d in new and d in base])
+    except Exception as e:  # never let the report break the verdict
+        lin, SIZES = {}, ()
+        print(f"\n(lineage report failed: {e})")
+    review = []
+    for key, r in lin.items():
+        print(f"\n[{'PASS' if r['ok'] else 'REVIEW'}] lineages {key} (vs baseline {r['vs']})")
+        for k in (f">={s}" for s in SIZES):
+            x, b = r[k], r["base_coherence_ref"][k]
+            print(f"   clones {k:<4} {x['base_clones']:>5} clones / {x['base_cells']:>6} cells | recovered {x['cells_ratio']:.3f} "
+                  f"| lost {x['clones_lost']:>3} | coherence {b['coherence']} -> {x['coherence']}")
+        if not r["ok"]:
+            review.append(key)
+            print("   lost lineages (>=5 cells) [clone, size, recovered]:", r[">=5"]["lost_examples"])
+    print(f"OVERALL: {'PASS' if overall else 'FAIL'}  (a set passes on its own rule; every scored set must pass)"
+          + (f"  | LINEAGE REVIEW: {', '.join(review)}" if review else ""))
 
 
 if __name__ == "__main__":
