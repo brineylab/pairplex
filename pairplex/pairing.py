@@ -36,7 +36,10 @@ Two rules are available:
       groups, of the gap between the top and the second-best chain's share. In [0, 1); equal
       to ``min(s_H, s_L)`` for a 1H+1L barcode.
     * ``umis`` on each chain (``umis:0`` heavy, ``umis:1`` light in the paired outputs): the
-      chain's support used for ranking (summed over merged same-clonotype contigs).
+      emitted contig's own UMI count from the metadata (same meaning as the support columns
+      of the unpaired outputs).
+    * ``chain_umis`` on each chain: the support used for ranking, i.e. ``umis`` summed over
+      the same-clonotype contigs merged with it (equal to ``umis`` when nothing was merged).
 
 Default ``min_dominance = 2.0``: the top chain must hold at least two thirds of a 2-chain
 group's UMIs. In real data about half of the 1H+2L / 2H+1L barcodes meet it; near-even splits
@@ -60,7 +63,8 @@ DEFAULT_MIN_DOMINANCE = 2.0
 DEFAULT_PSEUDOCOUNT = 1.0
 
 # contract columns of pairs/pairs.parquet (see diagnosis/bench/README.md), per chain
-_CHAIN_COLS = ["locus", "v_gene", "j_gene", "junction", "cdr3_aa", "sequence_id", "sequence", "umis"]
+_CHAIN_COLS = ["locus", "v_gene", "j_gene", "junction", "cdr3_aa", "sequence_id", "sequence", "umis", "chain_umis"]
+_INT_COLS = ("umis", "chain_umis")
 _WELL_RE = re.compile(r"(\d+)")
 
 
@@ -231,8 +235,9 @@ def scored_pairs(
         if res.heavy is None:
             continue
         heavy, light = by_id[res.heavy.name], by_id[res.light.name]
-        heavy["umis"] = res.heavy.umis
-        light["umis"] = res.light.umis
+        for seq, ch in ((heavy, res.heavy), (light, res.light)):
+            seq["umis"] = int(support.get(ch.name, (1, 0))[0])
+            seq["chain_umis"] = ch.umis
         pairs.append(
             abutils.Pair(
                 [heavy, light],
@@ -305,7 +310,7 @@ def contract_frame(paired_parquet: str | Path, well: int | None) -> pl.DataFrame
         for c in _CHAIN_COLS:
             k = f"{c}:{s}"
             cols.append(pl.col(k) if k in df.columns else pl.lit(None).alias(k))
-    return df.select(cols).with_columns(pl.col("umis:0").cast(pl.Int64), pl.col("umis:1").cast(pl.Int64))
+    return df.select(cols).with_columns(pl.col(f"{c}:{i}").cast(pl.Int64) for c in _INT_COLS for i in (0, 1))
 
 
 def write_contract_pairs(frames: list[pl.DataFrame], output_file: str | Path) -> int:
@@ -318,7 +323,7 @@ def write_contract_pairs(frames: list[pl.DataFrame], output_file: str | Path) ->
     else:
         schema = {"barcode": pl.Utf8, "well": pl.Int64, "name": pl.Utf8, "confidence": pl.Float64, "margin": pl.Float64}
         for s in (0, 1):
-            schema.update({f"{c}:{s}": (pl.Int64 if c == "umis" else pl.Utf8) for c in _CHAIN_COLS})
+            schema.update({f"{c}:{s}": (pl.Int64 if c in _INT_COLS else pl.Utf8) for c in _CHAIN_COLS})
         df = pl.DataFrame(schema=schema)
     df.write_parquet(out)
     return df.height

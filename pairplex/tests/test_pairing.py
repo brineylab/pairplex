@@ -112,7 +112,7 @@ def test_scored_pairs_on_a_well():
                    "DDD": ("DDD_contig-0", "DDD_contig-2")}
     assert reasons == {"paired": 3, "both_ambiguous": 1}
     bbb = next(p for p in pairs if p.name == "BBB")
-    assert bbb.light["umis"] == 7 and bbb.confidence == pytest.approx(4 / 5 * 7 / 9)
+    assert bbb.light["umis"] == bbb.light["chain_umis"] == 7 and bbb.confidence == pytest.approx(4 / 5 * 7 / 9)
     # the legacy rule keeps only the strict 1H+1L barcode
     assert {p.name for p in exact_pairs(seqs)} == {"AAA"}
 
@@ -124,7 +124,9 @@ def test_clonal_relatives_do_not_compete():
     pairs, reasons = scored_pairs(seqs, support)
     assert reasons == {"paired": 1}
     p = pairs[0]
-    assert p.heavy["sequence_id"] == "EEE_contig-1" and p.heavy["umis"] == 6
+    assert p.heavy["sequence_id"] == "EEE_contig-1"
+    # umis = the emitted contig's own count; chain_umis = ranking support summed over merged contigs
+    assert p.heavy["umis"] == 3 and p.heavy["chain_umis"] == 6
     assert p.confidence == pytest.approx(6 / 7 * 5 / 6)
     # without collapsing, the even split is ambiguous and the lineage is lost
     _, reasons = scored_pairs(seqs, support, collapse_clonal=False)
@@ -152,7 +154,7 @@ def test_pair_well_writes_outputs_and_contract(tmp_path):
     p = pl.read_parquet(out)
     for c in ("barcode", "well", "name", "confidence") + tuple(
             f"{c}:{s}" for s in (0, 1) for c in ("locus", "v_gene", "j_gene", "junction", "cdr3_aa",
-                                                 "sequence_id", "sequence", "umis")):
+                                                 "sequence_id", "sequence", "umis", "chain_umis")):
         assert c in p.columns
     assert set(p["well"]) == {7} and p["confidence"].is_between(0, 1).all()
     assert set(p["locus:0"]) == {"IGH"}
