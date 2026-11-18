@@ -272,7 +272,7 @@ def failure_table(rows: list[dict]) -> pl.DataFrame:
     if df.height == 0:
         return df
     total = df.group_by("kind", "mode").agg(pl.col("count").sum()).with_columns(pl.lit("TOTAL").alias("well"))
-    total = total.select(list(FAILURE_COLUMNS)).sort(["kind", "count"], descending=[False, True])
+    total = total.select(list(FAILURE_COLUMNS)).sort(["kind", "count", "mode"], descending=[False, True, False])
     return pl.concat([df, total])
 
 
@@ -375,7 +375,7 @@ def umi_hamming1_stats(parsed: pl.DataFrame, max_umis: int = 200_000, seed: int 
              "umis_with_h1_neighbour": 0, "umis_with_h1_neighbour_null": 0}
     if parsed.height == 0:
         return empty
-    u = parsed.select("barcode", "umi").drop_nulls().unique()
+    u = parsed.select("barcode", "umi").drop_nulls().unique().sort("barcode", "umi")  # fixed order: seeded shuffle
     if u.height == 0:
         return empty
     L = u["umi"].str.len_chars().mode().sort()[-1]

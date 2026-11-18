@@ -177,6 +177,11 @@ def run(
         If ``True``, reproduce v2-base exactly: forces ``tso_g_max`` to strip every leading G
         (``lstrip("G")``), ``barcode_prefer_exact=False``, ``umi_collapse="none"``, ``support_columns=False``,
         ``qc=False`` and ``pairing="exact"``.
+        Row order is not a legacy behaviour: in every mode (``legacy=True`` included) reads enter
+        clustering in input-file order and every output is written in a fixed order (see
+        Notes), whatever the worker count. v2-base collected worker results with ``as_completed``,
+        so its read order, and hence greedy-clustering and POA tie-breaks, varied from run to
+        run; the fixed order is one of the outcomes v2-base could produce.
 
     quiet : bool
         Whether to suppress the progress bar and other update messages.
@@ -203,6 +208,15 @@ def run(
     -------
     list
         A list of paths to the output files.
+
+    Notes
+    -----
+    Determinism: the same input and options give the same outputs, independent of
+    ``PAIRPLEX_MAX_WORKERS``. Barcode-parsing chunks are concatenated in chunk (= input) order, so
+    the reads of a droplet reach clustering and POA in input-file order. Droplets are processed
+    in sorted barcode order, so ``metadata/`` and ``consensus/`` rows are ordered by barcode, then
+    contig index. Annotated contigs are naturally sorted by ``sequence_id`` before they are
+    written, and paired outputs are naturally sorted by barcode.
 
     """
     parameters = dict(locals())  # captured first: exactly the arguments of this call
@@ -331,6 +345,25 @@ def run(
     # QC accumulators (qc=True): per-well stage counts, abstar failure modes, fragments, UMI stats
     qc_rows, qc_failures, qc_fragments, qc_umis, qc_wells = [], [], {}, [], []
 
+    def finish_well(to_delete, printers):
+        """End of one input file (also on early exits): delete temp files, close its printers, advance."""
+        if not debug:
+            main_pbar.set_postfix_str("cleaning up", refresh=True)
+            for f in to_delete:
+                if f is not None:
+                    if os.path.exists(f):
+                        os.remove(f)
+            if os.path.isdir(temp_directory) and not os.listdir(temp_directory):
+                os.rmdir(temp_directory)
+
+        # close out sub-progress bars
+        time.sleep(2)
+        for printer in printers:
+            printer.close()
+
+        # update the main progress bar
+        main_pbar.update(1)
+
     # initialize the Process Pool
     with ProcessPoolExecutor(
         max_workers=available_cpus(), mp_context=mp.get_context("spawn")
@@ -339,6 +372,7 @@ def run(
             # Checking for empty file, as this will break later steps
             if os.path.getsize(input_file) == 0:
                 main_pbar.set_postfix_str("partitioning barcodes", refresh=True)
+                main_pbar.update(1)
                 continue
 
             to_delete = []
@@ -347,6 +381,7 @@ def run(
             name_printer = tqdm(total=0, bar_format="{desc}", position=4, leave=False)
             seqs_printer = tqdm(total=0, bar_format="{desc}", position=5, leave=False)
             valids_printer = tqdm(total=0, bar_format="{desc}", position=6, leave=False)
+            printers = [name_printer, seqs_printer, valids_printer]
 
             # process the input file
             input_file = Path(input_file)
@@ -401,7 +436,8 @@ def run(
                 executor.submit(parse_barcodes, chunk, temp_directory, **parse_kwargs)
                 for chunk in fastq_chunks
             ]
-            for future in as_completed(futures):
+            # results in chunk order (not completion order): reads keep their input order
+            for future in futures:
                 res = future.result()
                 if barcode_prefer_exact:
                     res, counts = res
@@ -417,6 +453,7 @@ def run(
                 running_total_printer.set_description_str(
                     f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
                 )
+                finish_well(to_delete, printers)
                 continue
             concat_parquet = abutils.io.concatenate_parquet(
                 parquet_chunks, parsed_directory / f"{name}.parquet"
@@ -466,6 +503,7 @@ def run(
             consensus_printer = tqdm(
                 total=0, bar_format="{desc}", position=8, leave=False
             )
+            printers.append(consensus_printer)
 
             # make consensus sequences for each droplet
             futures = []
@@ -480,7 +518,7 @@ def run(
                 "quiet": quiet,
                 "debug": debug,
             }
-            for bc, bc_df in partitions.items():
+            for bc, bc_df in sorted(partitions.items()):  # fixed droplet order
                 if isinstance(bc, tuple):
                     bc = bc[0]
                 futures.append(
@@ -494,18 +532,23 @@ def run(
 
             # collect metadata
             metadata = []
+            droplet_results = [None] * len(futures)
+            future_index = {f: i for i, f in enumerate(futures)}
             droplet_count = 0
             consensus_count = 0
             for future in as_completed(futures):
                 res = future.result()
+                droplet_results[future_index[future]] = res
                 if res is not None:
-                    metadata.extend(res)
                     droplet_count += 1
                     consensus_count += len([r for r in res if r["pass_filters"]])
                 consensus_pbar.update(1)
                 consensus_printer.set_description_str(
                     f"{droplet_count} droplet barcodes | {consensus_count} consensus sequences"
                 )
+            for res in droplet_results:  # submission (= sorted barcode) order
+                if res is not None:
+                    metadata.extend(res)
             metadata_df = pl.DataFrame(metadata)
             consensus_pbar.close()
             if qc:
@@ -526,6 +569,7 @@ def run(
                     f"{droplet_count} droplet barcodes | 0 consensus sequences"
                 )
                 consensus_file.touch()
+                finish_well(to_delete, printers)
                 continue
             filtered_df = metadata_df.filter(pl.col("pass_filters"))
             with consensus_file.open("w") as f:
@@ -545,6 +589,7 @@ def run(
             main_pbar.set_postfix_str("annotating sequences", refresh=True)
             # failsafe for empty consensus files
             if consensus_count <= 1 or os.path.getsize(consensus_file) == 0: # Changed consensus_count to include 1 (a single sequence can't be paired)
+                finish_well(to_delete, printers)
                 continue
             consensus_count = filtered_df.shape[0]
             # run abstar (always with an explicit MMseqs2 thread count, see docstring)
@@ -555,6 +600,8 @@ def run(
                     receptor=receptor,
                     mmseqs_threads=mmseqs_threads,
                 )
+            if isinstance(sequences, list):  # fixed row order for every annotated output
+                sequences = natsorted(sequences, key=lambda s: s.id)
             if qc:
                 ann_df = qc_mod.annotation_frame(sequences)
                 n_rec = len(record_failures)
@@ -614,26 +661,9 @@ def run(
             #      cleanup
             # --------------------
 
-            if not debug:
-                main_pbar.set_postfix_str("cleaning up", refresh=True)
-                for f in to_delete:
-                    if f is not None:
-                        if os.path.exists(f):
-                            os.remove(f)
-                if os.path.isdir(temp_directory) and not os.listdir(temp_directory):
-                    os.rmdir(temp_directory)
-
-            # close out sub-progress bars
-            time.sleep(2)
-            name_printer.close()
-            seqs_printer.close()
-            valids_printer.close()
-            consensus_printer.close()
             if pairs_printer is not None:
-                pairs_printer.close()
-
-            # update the main progress bar
-            main_pbar.update(1)
+                printers.append(pairs_printer)
+            finish_well(to_delete, printers)
 
     n_contract_pairs = None
     if pairing == "scored":
