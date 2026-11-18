@@ -139,6 +139,90 @@ def test_different_clonotypes_still_compete():
     assert scored_pairs(seqs, support)[1] == {"heavy_ambiguous": 1}
 
 
+# ---------------------------------------------------------------- non-productive chains
+
+
+def _np(bc, n, locus, cdr3=None, v=True):
+    s = _seq(bc, n, locus, productive=False)
+    s["cdr3_aa"] = cdr3
+    if not v:
+        s["v_gene"] = None
+    return s
+
+
+def test_nonproductive_only_barcode_is_paired():
+    # heavy group has only a non-productive chain (no CDR3 aa), light is productive
+    seqs = [_np("NNN", 0, "IGH"), _seq("NNN", 1, "IGK")]
+    support = {"NNN_contig-0": (4, 40), "NNN_contig-1": (5, 50)}
+    pairs, reasons = scored_pairs(seqs, support)
+    assert reasons == {"paired": 1}
+    assert (pairs[0].heavy["sequence_id"], pairs[0].light["sequence_id"]) == ("NNN_contig-0", "NNN_contig-1")
+    assert pairs[0].confidence == pytest.approx(4 / 5 * 5 / 6)
+    # both groups non-productive also pair
+    seqs = [_np("MMM", 0, "IGH"), _np("MMM", 1, "IGL", cdr3="CQQ*Y")]
+    assert scored_pairs(seqs, {})[1] == {"paired": 1}
+
+
+def test_productive_heavy_beats_nonproductive_without_ambiguity():
+    # the non-productive heavy has more UMIs, but productive chains are the only competitors
+    seqs = [_seq("PPP", 0, "IGH"), _np("PPP", 1, "IGH", cdr3="CAR*W"), _seq("PPP", 2, "IGK")]
+    support = {"PPP_contig-0": (3, 30), "PPP_contig-1": (8, 80), "PPP_contig-2": (5, 50)}
+    pairs, reasons = scored_pairs(seqs, support)
+    assert reasons == {"paired": 1}
+    p = pairs[0]
+    assert p.heavy["sequence_id"] == "PPP_contig-0" and p.heavy["chain_umis"] == 3
+    assert p.confidence == pytest.approx(3 / 4 * 5 / 6)  # the non-productive UMIs are not counted
+
+
+def test_null_cdr3_or_v_chains_are_not_merged():
+    # two non-productive heavies with null CDR3 aa: they compete (even split -> ambiguous), never merge
+    seqs = [_np("QQQ", 0, "IGH"), _np("QQQ", 1, "IGH"), _seq("QQQ", 2, "IGK")]
+    support = {"QQQ_contig-0": (3, 30), "QQQ_contig-1": (3, 31), "QQQ_contig-2": (5, 50)}
+    assert scored_pairs(seqs, support)[1] == {"heavy_ambiguous": 1}
+    # same CDR3 aa but a null V gene: not merged either
+    seqs = [_np("RRR", 0, "IGH", cdr3="CARDY", v=False), _np("RRR", 1, "IGH", cdr3="CARDY", v=False),
+            _seq("RRR", 2, "IGK")]
+    support = {"RRR_contig-0": (3, 30), "RRR_contig-1": (3, 31), "RRR_contig-2": (5, 50)}
+    assert scored_pairs(seqs, support)[1] == {"heavy_ambiguous": 1}
+    # identical non-null V, J, CDR3 aa: merged (non-productive chains collapse like productive ones)
+    seqs = [_np("SSS", 0, "IGH", cdr3="CAR*Y"), _np("SSS", 1, "IGH", cdr3="CAR*Y"), _seq("SSS", 2, "IGK")]
+    support = {"SSS_contig-0": (3, 30), "SSS_contig-1": (3, 31), "SSS_contig-2": (5, 50)}
+    pairs, reasons = scored_pairs(seqs, support)
+    assert reasons == {"paired": 1} and pairs[0].heavy["chain_umis"] == 6
+
+
+def test_productive_only_restores_previous_behaviour():
+    seqs, support = _well()
+    seqs += [_np("NNN", 0, "IGH"), _seq("NNN", 1, "IGK"),
+             _seq("PPP", 0, "IGH"), _np("PPP", 1, "IGH", cdr3="CAR*W"), _seq("PPP", 2, "IGK")]
+    support.update({"NNN_contig-0": (4, 40), "NNN_contig-1": (5, 50),
+                    "PPP_contig-0": (3, 30), "PPP_contig-1": (8, 80), "PPP_contig-2": (5, 50)})
+    old, old_reasons = scored_pairs(seqs, support, productive_only=True)
+    new, new_reasons = scored_pairs(seqs, support)
+    key = lambda ps: {p.name: (p.heavy["sequence_id"], p.light["sequence_id"], p.confidence) for p in ps}
+    # productive_only: NNN has no heavy; PPP resolved on its productive heavy only
+    assert old_reasons == {"paired": 4, "both_ambiguous": 1, "no_heavy": 1}
+    assert set(key(old)) == {"AAA", "BBB", "DDD", "PPP"}
+    # default: NNN recovered, every productive-only pair unchanged
+    assert set(key(new)) == set(key(old)) | {"NNN"}
+    assert {k: v for k, v in key(new).items() if k != "NNN"} == key(old)
+
+
+def test_productive_flag_in_paired_outputs_and_contract(tmp_path):
+    seqs = [_np("NNN", 0, "IGH"), _seq("NNN", 1, "IGK"), _seq("AAA", 0, "IGH"), _seq("AAA", 1, "IGK")]
+    pq = tmp_path / "well003_paired.parquet"
+    pair_well(seqs, tmp_path / "well003_paired.tsv", pq, mode="scored", support={})
+    df = pl.read_parquet(pq)
+    assert {"productive:0", "productive:1"} <= set(df.columns)
+    out = tmp_path / "pairs.parquet"
+    write_contract_pairs([contract_frame(pq, 3)], out)
+    p = pl.read_parquet(out).sort("name")
+    assert p.schema["productive:0"] == pl.Boolean
+    assert p["productive:0"].to_list() == [True, False] and p["productive:1"].to_list() == [True, True]
+    write_contract_pairs([], tmp_path / "e.parquet")
+    assert pl.read_parquet(tmp_path / "e.parquet").schema["productive:1"] == pl.Boolean
+
+
 def test_pair_well_writes_outputs_and_contract(tmp_path):
     seqs, support = _well()
     tsv, pq = tmp_path / "well007_paired.tsv", tmp_path / "well007_paired.parquet"
@@ -154,7 +238,7 @@ def test_pair_well_writes_outputs_and_contract(tmp_path):
     p = pl.read_parquet(out)
     for c in ("barcode", "well", "name", "confidence") + tuple(
             f"{c}:{s}" for s in (0, 1) for c in ("locus", "v_gene", "j_gene", "junction", "cdr3_aa",
-                                                 "sequence_id", "sequence", "umis", "chain_umis")):
+                                                 "productive", "sequence_id", "sequence", "umis", "chain_umis")):
         assert c in p.columns
     assert set(p["well"]) == {7} and p["confidence"].is_between(0, 1).all()
     assert set(p["locus:0"]) == {"IGH"}

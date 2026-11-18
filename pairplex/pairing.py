@@ -12,13 +12,18 @@ Two rules are available:
     chain (any productivity). Barcodes with several chains are dropped.
 
 ``"scored"`` (default)
-    Dominance-aware resolution. For each (well, barcode), the *productive* heavy chains (IGH)
-    and the *productive* light chains (IGK and IGL together: a cell expresses one light chain,
-    so kappa and lambda compete in the same group) are ranked by support: corrected UMIs from
-    the metadata CSV, then reads as a tie-break, then contig name for determinism.
-    Same-locus contigs sharing V gene, J gene and CDR3 aa are first merged into one chain
-    (summed support; ``collapse_clonal``), so a chain split into two consensus clusters, or two
-    clonal relatives, never competes with itself.
+    Dominance-aware resolution. For each (well, barcode), the heavy chains (IGH) and the light
+    chains (IGK and IGL together: a cell expresses one light chain, so kappa and lambda compete
+    in the same group) are ranked by support: corrected UMIs from the metadata CSV, then reads
+    as a tie-break, then contig name for determinism.
+    The competitors of a group are its *productive* chains if it has any, otherwise its
+    non-productive chains (``productive`` false or null). So a non-productive allele transcript
+    never makes a productive chain ambiguous, and barcodes whose only chains of a group are
+    non-productive are still paired (``productive:0/1`` in the outputs lets users filter them
+    downstream). With ``productive_only=True`` non-productive chains are ignored altogether.
+    Same-locus contigs sharing V gene, J gene and CDR3 aa (all non-null) are first merged into
+    one chain (summed support; ``collapse_clonal``), so a chain split into two consensus
+    clusters, or two clonal relatives, never competes with itself.
     The top heavy and the top light are emitted when, in each group,
 
         u1 >= min_dominance * u2
@@ -64,8 +69,11 @@ DEFAULT_MIN_DOMINANCE = 2.0
 DEFAULT_PSEUDOCOUNT = 1.0
 
 # contract columns of pairs/pairs.parquet (see diagnosis/bench/README.md), per chain
-_CHAIN_COLS = ["locus", "v_gene", "j_gene", "junction", "cdr3_aa", "sequence_id", "sequence", "umis", "chain_umis"]
+_CHAIN_COLS = [
+    "locus", "v_gene", "j_gene", "junction", "cdr3_aa", "productive", "sequence_id", "sequence", "umis", "chain_umis",
+]
 _INT_COLS = ("umis", "chain_umis")
+_BOOL_COLS = ("productive",)
 _WELL_RE = re.compile(r"(\d+)")
 
 
@@ -114,7 +122,8 @@ def resolve_barcode(
     Parameters
     ----------
     heavies, lights : iterable of Chain
-        Productive heavy chains and productive light chains (IGK and IGL together).
+        Competing heavy chains and light chains (IGK and IGL together); see ``scored_pairs``
+        for how productivity selects them.
     min_dominance : float
         Emit only if, in each group, the top chain has >= ``min_dominance`` x the UMIs of the
         second-best chain. Values <= 1 accept any split (ties broken by reads, then name).
@@ -149,14 +158,19 @@ def collapse_clonotypes(chains: list[Chain], annotations: dict) -> list[Chain]:
     Within one (well, barcode), two contigs with the same clonotype are one chain split into two
     consensus clusters (sequencing or PCR errors, fragments) or clonal relatives; either way they
     support the same pairing and must not compete. The merged chain keeps the name of its best
-    contig (UMIs, reads, name) and the summed UMIs and reads. Contigs without a CDR3 aa are kept
-    as they are.
+    contig (UMIs, reads, name) and the summed UMIs and reads. Contigs missing any of V gene,
+    J gene or CDR3 aa (common for non-productive chains) are never merged.
     """
     groups: dict[tuple, list[Chain]] = {}
     for c in chains:
         a = annotations.get(c.name)
-        cdr3 = a["cdr3_aa"] if a is not None else None
-        key = (a["locus"], _gene(a["v_gene"]), _gene(a["j_gene"]), cdr3) if cdr3 else ("_id", c.name)
+        key = None
+        if a is not None:
+            v, j, cdr3 = _gene(a["v_gene"]), _gene(a["j_gene"]), a["cdr3_aa"]
+            if v and j and cdr3:
+                key = (a["locus"], v, j, cdr3)
+        if key is None:
+            key = ("_id", c.name)
         groups.setdefault(key, []).append(c)
     out = []
     for members in groups.values():
@@ -189,6 +203,7 @@ def scored_pairs(
     min_dominance: float = DEFAULT_MIN_DOMINANCE,
     pseudocount: float = DEFAULT_PSEUDOCOUNT,
     collapse_clonal: bool = True,
+    productive_only: bool = False,
 ) -> tuple[list, dict[str, int]]:
     """
     Resolve every barcode of one well with ``resolve_barcode``.
@@ -202,6 +217,10 @@ def scored_pairs(
     collapse_clonal : bool
         Merge same-locus contigs of a barcode that share V gene, J gene and CDR3 aa before
         ranking (see ``collapse_clonotypes``).
+    productive_only : bool
+        If True, ignore non-productive chains (lane B / #20 behaviour). If False (default), each
+        locus group of a barcode competes among its productive chains if it has any, otherwise
+        among its non-productive chains (``productive`` false or null).
 
     Returns
     -------
@@ -209,29 +228,34 @@ def scored_pairs(
     annotation; the pair has ``confidence`` and ``margin`` attributes) and a count per
     resolution reason.
     """
-    groups: dict[str, tuple[list, list]] = {}
+    # per barcode: [heavy productive, heavy non-productive, light productive, light non-productive]
+    groups: dict[str, tuple[list, list, list, list]] = {}
     by_id = {}
     for s in sequences:
-        if not _productive(s):
+        prod = _productive(s)
+        if productive_only and not prod:
             continue
         locus = s["locus"]
         if locus in HEAVY_LOCI:
             side = 0
         elif locus in LIGHT_LOCI:
-            side = 1
+            side = 2
         else:
             continue
         sid = s["sequence_id"]
         by_id[sid] = s
-        groups.setdefault(_barcode(sid), ([], []))[side].append(sid)
+        groups.setdefault(_barcode(sid), ([], [], [], []))[side + (not prod)].append(sid)
 
     pairs, reasons = [], {}
-    for bc, (h_ids, l_ids) in groups.items():
-        def chains(ids):
+    for bc, (hp, hn, lp, ln) in groups.items():
+        def chains(prod_ids, nonprod_ids):
+            ids = prod_ids or nonprod_ids  # productive chains compete if any, else non-productive
             out = [Chain(i, *(int(x) for x in support.get(i, (1, 0)))) for i in ids]
             return collapse_clonotypes(out, by_id) if collapse_clonal else out
 
-        res = resolve_barcode(chains(h_ids), chains(l_ids), min_dominance, pseudocount)
+        h_ids, l_ids = (hp, hn), (lp, ln)
+
+        res = resolve_barcode(chains(*h_ids), chains(*l_ids), min_dominance, pseudocount)
         reasons[res.reason] = reasons.get(res.reason, 0) + 1
         if res.heavy is None:
             continue
@@ -275,6 +299,7 @@ def pair_well(
     min_dominance: float = DEFAULT_MIN_DOMINANCE,
     pseudocount: float = DEFAULT_PSEUDOCOUNT,
     collapse_clonal: bool = True,
+    productive_only: bool = False,
 ) -> list:
     """
     Pair one well's annotated contigs with the chosen rule and write the paired files.
@@ -290,7 +315,7 @@ def pair_well(
         return pairs
     if mode != "scored":
         raise ValueError(f"unknown pairing mode {mode!r}; expected one of {PAIRING_MODES}")
-    pairs, _ = scored_pairs(sequences, support or {}, min_dominance, pseudocount, collapse_clonal)
+    pairs, _ = scored_pairs(sequences, support or {}, min_dominance, pseudocount, collapse_clonal, productive_only)
     pairs = natsorted(pairs, key=lambda p: p.name)
     write_paired(pairs, paired_airr_file, paired_parquet_file, scored=True)
     return pairs
@@ -317,7 +342,10 @@ def contract_frame(paired_parquet: str | Path, well: int | None) -> pl.DataFrame
         for c in _CHAIN_COLS:
             k = f"{c}:{s}"
             cols.append(pl.col(k) if k in df.columns else pl.lit(None).alias(k))
-    return df.select(cols).with_columns(pl.col(f"{c}:{i}").cast(pl.Int64) for c in _INT_COLS for i in (0, 1))
+    return df.select(cols).with_columns(
+        *(pl.col(f"{c}:{i}").cast(pl.Int64) for c in _INT_COLS for i in (0, 1)),
+        *(pl.col(f"{c}:{i}").cast(pl.Boolean) for c in _BOOL_COLS for i in (0, 1)),
+    )
 
 
 def write_contract_pairs(frames: list[pl.DataFrame], output_file: str | Path) -> int:
@@ -330,7 +358,8 @@ def write_contract_pairs(frames: list[pl.DataFrame], output_file: str | Path) ->
     else:
         schema = {"barcode": pl.Utf8, "well": pl.Int64, "name": pl.Utf8, "confidence": pl.Float64, "margin": pl.Float64}
         for s in (0, 1):
-            schema.update({f"{c}:{s}": (pl.Int64 if c in _INT_COLS else pl.Utf8) for c in _CHAIN_COLS})
+            schema.update({f"{c}:{s}": (pl.Int64 if c in _INT_COLS else pl.Boolean if c in _BOOL_COLS else pl.Utf8)
+                           for c in _CHAIN_COLS})
         df = pl.DataFrame(schema=schema)
     df.write_parquet(out)
     return df.height

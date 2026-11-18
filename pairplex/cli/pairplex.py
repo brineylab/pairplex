@@ -142,6 +142,12 @@ def version():
     help="Scored pairing: merge same-locus contigs sharing V, J and CDR3 aa before ranking",
 )
 @click.option(
+    "--productive-only/--keep-nonproductive",
+    "productive_only",
+    default=False,
+    help="Scored pairing: ignore non-productive chains (default keeps them; a group with no productive chain competes among its non-productive chains)",
+)
+@click.option(
     "--legacy",
     is_flag=True,
     help="Reproduce v2-base behaviour exactly (overrides the options of newer fixes)",
@@ -183,6 +189,7 @@ def run(
     pairing: str,
     min_dominance: float,
     collapse_clonal: bool,
+    productive_only: bool,
     legacy: bool,
     quiet: bool,
     debug: bool,
@@ -210,6 +217,7 @@ def run(
         pairing=pairing,
         min_dominance=min_dominance,
         collapse_clonal=collapse_clonal,
+        productive_only=productive_only,
         legacy=legacy,
         quiet=quiet,
         debug=debug,
@@ -328,10 +336,14 @@ def make_fastq(
 @click.option("--leakage", type=float, default=None, help="Pre-split leakage f in [0,1); estimated from the data if omitted")
 @click.option("--min-confidence", type=float, default=0.0, help="Drop pairs below this confidence (default keeps all, scored)")
 @click.option("--ambient-filter/--no-ambient-filter", default=False, help="Exclude likely ambient copies (opt-in; validate first)")
-def pair_pooled_cmd(run_directory, output, wells, leakage, min_confidence, ambient_filter):
+@click.option("--productive-only/--keep-nonproductive", "productive_only", default=False,
+              help="Pool productive chains only (default also pools non-productive chains that have a junction)")
+@click.option("--legacy", is_flag=True, help="Reproduce v2-base pooled pairing (forces --productive-only)")
+def pair_pooled_cmd(run_directory, output, wells, leakage, min_confidence, ambient_filter, productive_only, legacy):
     """Pool a per-well run by droplet barcode and pair H/L by shared home well, with a confidence per pair."""
     rng = tuple(int(x) for x in wells.split("-")) if wells else None
-    pairs, info = run_pooled_pairing(run_directory, output, rng, leakage, min_confidence, ambient_filter)
+    pairs, info = run_pooled_pairing(run_directory, output, rng, leakage, min_confidence, ambient_filter,
+                                     productive_only=productive_only, legacy=legacy)
     print(f"wells={info['wells']} leakage={info['leakage']:.3f} ({'estimated' if info['leakage_estimated'] else 'given'}) "
           f"species={info['species']} pairs={info['pairs']} -> {info['output']}")
     for t in (0.5, 0.9):

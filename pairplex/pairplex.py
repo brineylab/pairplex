@@ -67,6 +67,7 @@ def run(
     pairing: str = "scored",
     min_dominance: float = DEFAULT_MIN_DOMINANCE,
     collapse_clonal: bool = True,
+    productive_only: bool = False,
     legacy: bool = False,
     quiet: bool = False,
     debug: bool = False,
@@ -156,8 +157,9 @@ def run(
 
     pairing : str
         How heavy and light chains of a (well, barcode) are paired. ``"scored"`` (default): rank
-        the productive heavy chains and the productive light chains (IGK and IGL together) by
-        UMIs (then reads) and emit the top heavy + top light when each group passes
+        the heavy chains and the light chains (IGK and IGL together) by UMIs (then reads), each
+        group among its productive chains if it has any, otherwise among its non-productive
+        chains (see ``productive_only``), and emit the top heavy + top light when each group passes
         ``min_dominance``; every pair gets a ``confidence`` and a ``margin`` (see
         ``pairplex.pairing``), and all wells are also written to ``pairs/pairs.parquet``.
         ``"exact"``: the ``v2-base`` rule, keep only barcodes with exactly one heavy and one
@@ -171,7 +173,17 @@ def run(
     collapse_clonal : bool
         Scored pairing only. Before ranking, merge same-locus contigs of a (well, barcode) that
         share V gene, J gene and CDR3 aa (one chain split into several consensus clusters, or
-        clonal relatives), summing their UMIs, so they do not compete. Defaults to ``True``.
+        clonal relatives), summing their UMIs, so they do not compete. Contigs missing any of
+        V gene, J gene or CDR3 aa are never merged. Defaults to ``True``.
+
+    productive_only : bool
+        Scored pairing only. If ``True``, non-productive chains are ignored (the first scored
+        release's behaviour). If ``False`` (default), non-productive chains are kept: a locus
+        group with no productive chain competes among its non-productive chains, so barcodes
+        whose heavy (or light) chains are all non-productive are still paired, while a
+        productive chain always wins over non-productive ones of its group. ``productive:0/1``
+        in the paired outputs and ``pairs/pairs.parquet`` lets users filter downstream.
+        ``legacy=True`` uses the exact rule, which pairs chains of any productivity.
 
     legacy : bool
         If ``True``, reproduce v2-base exactly: forces ``tso_g_max`` to strip every leading G
@@ -643,6 +655,7 @@ def run(
                     support=support_from_metadata(metadata_df),
                     min_dominance=min_dominance,
                     collapse_clonal=collapse_clonal,
+                    productive_only=productive_only,
                 )
                 if qc:
                     wc["emitted_pairs"] = len(pairs)

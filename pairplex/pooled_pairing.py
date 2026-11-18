@@ -18,8 +18,11 @@ What this does
 --------------
 Works on a finished per-well PairPlex run (``annotated/*_unpaired.parquet`` + ``metadata/*.csv``):
 
-1. pools every productive chain of a reaction by droplet barcode across wells; a *chain species*
-   is (barcode, locus, V gene, J gene, junction nt), with its UMIs counted per well;
+1. pools every chain with a junction of a reaction by droplet barcode across wells (productive
+   and non-productive; ``productive_only=True`` keeps productive chains only); a *chain species*
+   is (barcode, locus, V gene, J gene, junction nt), with its UMIs counted per well. Chains
+   without a junction (frequent among non-productive contigs) cannot form a species and are
+   left out;
 2. estimates the leakage ``f`` from the reaction itself (species with >= 6 UMIs) unless given;
 3. computes, for each species and well, the posterior that the well is the chain's home under
    "each molecule stays home with prob 1-f, else lands in a uniform random well":
@@ -30,7 +33,8 @@ Works on a finished per-well PairPlex run (``annotated/*_unpaired.parquet`` + ``
    instead of a hard yes/no, so downstream analyses can choose their own precision/yield point.
 
 Output rows carry ``well`` (= home well), ``sequence_id:0/1`` and ``sequence:0/1`` so they can be
-scored directly with ``simplex.score``.
+scored directly with ``simplex.score``, and ``productive:0/1`` so non-productive chains can be
+filtered downstream.
 
 Determinism: every tie is broken explicitly (representative contig: most UMIs, then smallest
 ``sequence_id``; reciprocal-best candidates: highest confidence, then smallest well, heavy and
@@ -68,22 +72,29 @@ def _well_files(run_dir: Path, kind: str, wells: tuple[int, int] | None) -> list
     return sorted(out)
 
 
-def load_run(run_dir: str | Path, wells: tuple[int, int] | None = None) -> pl.DataFrame:
+def load_run(run_dir: str | Path, wells: tuple[int, int] | None = None, productive_only: bool = False) -> pl.DataFrame:
     """
-    Load productive annotated contigs of a per-well PairPlex run, with per-contig UMI counts.
+    Load annotated contigs with a junction of a per-well PairPlex run, with per-contig UMI counts.
 
-    Returns one row per contig: barcode, well, locus, v_gene, j_gene, junction, cdr3_aa,
-    sequence_id, sequence, umis.
+    Non-productive contigs (``productive`` false or null) are included unless ``productive_only``;
+    contigs without a junction are always left out (they cannot form a chain species).
+
+    Returns one row per contig: barcode, well, locus, productive, v_gene, j_gene, junction,
+    cdr3_aa, sequence_id, sequence, umis.
     """
     run_dir = Path(run_dir)
     ann = []
     for w, f in _well_files(run_dir, "ann", wells):
         cols = [c for c in _ANN_COLS if c in pl.read_parquet_schema(f)]
+        keep = pl.col("locus").is_in(["IGH", "IGK", "IGL"]) & pl.col("junction").is_not_null()
+        if productive_only:
+            keep = keep & pl.col("productive")
         ann.append(
             pl.scan_parquet(f).select(cols)
-            .filter(pl.col("productive") & pl.col("locus").is_in(["IGH", "IGK", "IGL"]) & pl.col("junction").is_not_null())
-            .with_columns(pl.col("sequence_id").str.split("_").list.first().alias("barcode"), pl.lit(w).alias("well"))
-            .drop("productive").collect()
+            .filter(keep)
+            .with_columns(pl.col("sequence_id").str.split("_").list.first().alias("barcode"), pl.lit(w).alias("well"),
+                          pl.col("productive").cast(pl.Boolean).fill_null(False))
+            .collect()
         )
     if not ann:
         raise FileNotFoundError(f"no annotated *_unpaired.parquet under {run_dir}")
@@ -162,7 +173,8 @@ def pair_pooled(
     ----------
     occ : DataFrame
         One row per contig (see ``load_run``): barcode, well, locus, v_gene, j_gene, junction,
-        cdr3_aa, sequence_id, sequence, umis.
+        cdr3_aa, sequence_id, sequence, umis, and optionally productive (then carried to the
+        output as ``productive:0/1``, from the species' representative contig).
     n_wells : int | None
         Wells in the reaction (default: wells observed in ``occ``).
     leakage : float | None
@@ -177,17 +189,19 @@ def pair_pooled(
     (pairs, info) : pairs has one row per reciprocal-best (H, L) pair with ``well`` (home well),
     ``confidence``, ``p_home:0/1``, home and pooled UMIs per chain, ``margin`` (confidence minus
     the best competing candidate for either chain), plus ``sequence_id:0/1``, ``sequence:0/1``,
-    ``v_gene``/``j_gene``/``cdr3_aa`` for both chains (``:0`` heavy, ``:1`` light).
+    ``v_gene``/``j_gene``/``cdr3_aa`` (and ``productive`` if given) for both chains (``:0`` heavy,
+    ``:1`` light).
     info has W, the leakage used and whether it was estimated.
     """
     W = int(n_wells or occ["well"].n_unique())
+    has_prod = "productive" in occ.columns
     # per (species, well): UMIs, and the representative contig there (most UMIs)
     # representative tie-break: most UMIs, then smallest sequence_id; rows in a fixed order so the
     # posterior sums below always add up in the same order
     sw = (occ.sort(["umis", "sequence_id"], descending=[True, False], maintain_order=True)
              .group_by(*SPECIES, "well")
              .agg(pl.col("umis").sum().alias("n"), pl.col("sequence_id").first(), pl.col("sequence").first(),
-                  pl.col("cdr3_aa").first())
+                  pl.col("cdr3_aa").first(), *([pl.col("productive").first()] if has_prod else []))
              .sort(*SPECIES, "well", nulls_last=True))
     est = leakage is None
     f = estimate_leakage(sw, W) if est else float(leakage)
@@ -209,7 +223,7 @@ def pair_pooled(
             pl.col("junction").alias(f"junction:{s}"), pl.col("cdr3_aa").alias(f"cdr3_aa:{s}"),
             pl.col("sequence_id").alias(f"sequence_id:{s}"), pl.col("sequence").alias(f"sequence:{s}"),
             pl.col("p_home").alias(f"p_home:{s}"), pl.col("n").alias(f"umis_home:{s}"), pl.col("N").alias(f"umis_pooled:{s}"),
-            pl.col("k").alias(f"n_wells:{s}"))
+            pl.col("k").alias(f"n_wells:{s}"), *([pl.col("productive").alias(f"productive:{s}")] if has_prod else []))
 
     H = side(pl.col("locus") == "IGH", 0)
     L = side(pl.col("locus") != "IGH", 1)
@@ -244,14 +258,25 @@ def run_pooled_pairing(
     leakage: float | None = None,
     min_confidence: float = 0.0,
     ambient_filter: bool = False,
+    productive_only: bool = False,
+    legacy: bool = False,
 ) -> tuple[pl.DataFrame, dict]:
     """Load a per-well PairPlex run, pair with ``pair_pooled`` and write a parquet (default
     ``<run_dir>/pooled/pooled_pairs.parquet``) plus ``<stem>_run_info.json`` (version, parameters,
-    totals)."""
+    totals).
+
+    ``productive_only``: pool productive contigs only. Default ``False``: non-productive contigs
+    with a junction are pooled too (contigs without a junction never are).
+    ``legacy``: reproduce v2-base pooled pairing, i.e. force ``productive_only=True``.
+    """
     parameters = dict(locals())
+    if legacy:
+        productive_only = True  # v2-base pooled productive contigs only
     out = Path(output_file) if output_file else Path(run_dir) / "pooled" / "pooled_pairs.parquet"
     log = RunLog(out.with_name(out.stem + "_run_info.json"), tool="pairplex pair-pooled", parameters=parameters)
-    occ = load_run(run_dir, wells)
+    occ = load_run(run_dir, wells, productive_only=productive_only)
+    if legacy:
+        occ = occ.drop("productive")  # v2-base output had no productive:0/1 columns
     pairs, info = pair_pooled(occ, leakage=leakage, min_confidence=min_confidence, ambient_filter=ambient_filter)
     out.parent.mkdir(parents=True, exist_ok=True)
     pairs.write_parquet(out)
