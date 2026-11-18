@@ -52,7 +52,9 @@ class SimplexConfig:
       `molecules_per_chain_mean_light` overrides the light-chain molecule count (light template is
       more abundant); `ambient_rate` adds pre-RT ambient capture: free mRNA from lysed cells barcoded
       in OTHER droplets (new barcode + UMI, random well), as `ambient_rate` x cell molecules;
-      `umi_sub_rate` adds per-read UMI substitution errors (uncorrected UMIs inflate support).
+      `umi_sub_rate` adds per-read UMI substitution errors (uncorrected UMIs inflate support);
+      `reads_per_molecule_dispersion` makes read-family depth negative binomial (PCR jackpots; 0 = Poisson);
+      `reads_per_molecule_mean_light` sets a separate read-family mean for light chains.
     - **Bookkeeping**: `write_read_truth` (also persist a per-read truth parquet —
       expensive, off by default), `seed` (root seed for all per-stage RNG streams).
     """
@@ -75,6 +77,18 @@ class SimplexConfig:
     truncation: str = "fragment_5p"; fragment_rate: float = 0.1; fragment_rate_heavy: float | None = None
     fragment_keep: tuple = (0.3, 0.9)
     umi_sub_rate: float = 0.0
+    reads_per_molecule_dispersion: float = 0.0
+    reads_per_molecule_mean_light: float | None = None
+    junk_rate: float = 0.0
+    junk_length: tuple = (80, 300)
+    input_filter: dict | None = None
+    sample_clone_alpha: float | None = None
+    constant_region: bool = False
+    heavy_isotype_mix: dict | None = None
+    barcode_sub_rate: float = 0.0
+    tso_sub_rate: float = 0.0
+    tso_g_run_probs: list | None = None
+    tso_indel_rate: float = 0.0
 
     _RATES=("recovery_rate","release_rate","molecule_survival_rate","rt_sub_rate","rt_indel_rate",
             "sequencing_sub_rate","sequencing_indel_rate","index_hop_rate","rc_fraction","umi_sub_rate")
@@ -123,6 +137,14 @@ class SimplexConfig:
         if self.molecules_per_chain_mean_light is not None and self.molecules_per_chain_mean_light<=0:
             raise ValueError("molecules_per_chain_mean_light must be > 0 or None")
         if self.ambient_rate<0: raise ValueError("ambient_rate must be >= 0")
+        if self.reads_per_molecule_dispersion<0: raise ValueError("reads_per_molecule_dispersion must be >= 0")
+        if self.junk_rate<0: raise ValueError("junk_rate must be >= 0")
+        for r in ("barcode_sub_rate","tso_sub_rate","tso_indel_rate"):
+            if not (0.0<=getattr(self,r)<=1.0): raise ValueError(f"{r} not in [0,1]")
+        jl,jh=self.junk_length
+        if not (1<=jl<=jh): raise ValueError(f"junk_length={self.junk_length} must satisfy 1<=min<=max")
+        if self.reads_per_molecule_mean_light is not None and self.reads_per_molecule_mean_light<=0:
+            raise ValueError("reads_per_molecule_mean_light must be > 0 or None")
         for r in ("fragment_rate","fragment_rate_heavy"):
             v=getattr(self,r)
             if v is not None and not (0.0<=v<=1.0): raise ValueError(f"{r}={v} not in [0,1]")

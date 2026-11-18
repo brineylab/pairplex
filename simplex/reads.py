@@ -21,7 +21,8 @@ def apply_sequencing_errors(reads,sub_rate,indel_rate,seed):
     if reads.height==0 or (sub_rate==0 and indel_rate==0): return reads
     cdna,ne=mutate_strings(list(reads["cdna"]),sub_rate,indel_rate,rng_for(seed,"seqerr"))
     return reads.with_columns([pl.Series("cdna",cdna),(pl.col("n_seq_errors")+pl.Series(ne)).alias("n_seq_errors")])
-def build_merged(reads,tso,rc_fraction,variable_length,seed,truncation="fragment_5p",fragment_rate=0.1,fragment_rate_heavy=None,fragment_keep=(0.3,0.9)):
+def build_merged(reads,tso,rc_fraction,variable_length,seed,truncation="fragment_5p",fragment_rate=0.1,fragment_rate_heavy=None,fragment_keep=(0.3,0.9),
+                 barcode_sub_rate=0.0,tso_sub_rate=0.0,tso_g_run_probs=None,tso_indel_rate=0.0):
     """Assemble each read into the merged layout `barcode(16)+umi(10)+TSO+cDNA` (Phase 1-2
     `output_mode="merged"`), matching what `pairplex.parse_barcodes` expects.
 
@@ -42,6 +43,13 @@ def build_merged(reads,tso,rc_fraction,variable_length,seed,truncation="fragment
     are then emitted reverse-complemented (`"rc"` RNG stream) to simulate the opposite
     sequencing orientation. `qual` is a placeholder string of the same length as
     `read_seq` (all `"I"`), not a real quality model.
+
+    v2d read-structure knobs (all default off = v2c layout): `barcode_sub_rate` per-base substitution in each read's
+    16-nt barcode (the parser corrects Hamming-1 against the whitelist and drops the rest); `tso_sub_rate`
+    per-base substitution in the 10-nt TSO body (real reads: only ~18% carry an exact TTTCTTATAT); `tso_g_run_probs`
+    probabilities of 0,1,2,... G after the TSO body instead of the fixed GGG; `tso_indel_rate` share of reads with a
+    1-3 nt insertion or deletion in the TSO body (shifts the cDNA start; real merged reads: ~20% of TSO bodies are
+    >=4 mismatches away from TTTCTTATAT, 60% exact, G-run after an exact TSO mostly 4-5).
 
     Empty-safe: if `reads` is empty, returns a typed empty frame with the
     `read_id, final_well, read_seq, qual` schema.
@@ -74,7 +82,32 @@ def build_merged(reads,tso,rc_fraction,variable_length,seed,truncation="fragment
              .with_columns(pl.col("cdna").str.slice(0,pl.col("_nl")).alias("cdna")).drop("_keep","_nl"))
     elif variable_length:
         raise ValueError(f"unknown truncation mode {truncation!r}")
-    r=r.with_columns(pl.concat_str([pl.col("barcode"),pl.col("umi"),pl.lit(tso),pl.col("cdna")]).alias("_frag"))
+    if barcode_sub_rate>0 or tso_sub_rate>0 or tso_g_run_probs or tso_indel_rate>0:
+        srng=rng_for(seed,"structure"); k=r.height; alt=np.array(list("ACGT"))
+        def _mut(strings, rate):
+            if rate<=0: return strings
+            A=np.array([list(x) for x in strings]); hit=srng.random(A.shape)<rate
+            if hit.any():
+                s2=alt[srng.integers(0,4,size=int(hit.sum()))]; same=s2==A[hit]
+                s2[same]=np.array([{"A":"C","C":"G","G":"T","T":"A"}.get(c,"A") for c in s2[same]]); A[hit]=s2
+            return ["".join(x) for x in A]
+        bcs=_mut(r["barcode"].to_list(),barcode_sub_rate)
+        body=tso.rstrip("G")
+        bodies=_mut([body]*k,tso_sub_rate)
+        if tso_indel_rate>0:
+            sel=np.flatnonzero(srng.random(k)<tso_indel_rate); bl=list(bodies)
+            for i in sel:
+                b=bl[i]; n=int(srng.integers(1,4)); p=int(srng.integers(0,len(b)))
+                bl[i]=(b[:p]+"".join(alt[srng.integers(0,4,size=n)])+b[p:]) if srng.random()<0.5 else (b[:p]+b[p+n:])
+            bodies=bl
+        if tso_g_run_probs:
+            pg=np.array(tso_g_run_probs,float); pg=pg/pg.sum(); g=srng.choice(len(pg),size=k,p=pg)
+        else:
+            g=np.full(k,len(tso)-len(body))
+        tsos=[b+"G"*int(n) for b,n in zip(bodies,g)]
+        r=r.with_columns(pl.Series("_bc",bcs),pl.Series("_tso",tsos)).with_columns(pl.concat_str([pl.col("_bc"),pl.col("umi"),pl.col("_tso"),pl.col("cdna")]).alias("_frag")).drop("_bc","_tso")
+    else:
+        r=r.with_columns(pl.concat_str([pl.col("barcode"),pl.col("umi"),pl.lit(tso),pl.col("cdna")]).alias("_frag"))
     rc=pl.Series(rng_for(seed,"rc").random(r.height)<rc_fraction)
     r=r.with_columns(rc.alias("_rc")).with_columns(
         pl.when(pl.col("_rc")).then(revcomp_expr("_frag")).otherwise(pl.col("_frag")).alias("read_seq"))

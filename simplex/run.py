@@ -7,7 +7,7 @@ synthetic dataset, its ground truth, and a run manifest.
 import sys, hashlib, json
 from pathlib import Path
 import numpy, polars
-from .cells import load_pairs, assign_droplets_and_barcodes, assign_wells
+from .cells import load_pairs, assign_droplets_and_barcodes, assign_wells, add_constant_region
 from .config import SimplexConfig
 from ._contract import BARCODE_LEN, UMI_LEN, TSO
 from .molecules import generate_molecules
@@ -57,6 +57,18 @@ def run(
     fragment_rate_heavy: float | None = None,
     fragment_keep: tuple = (0.3, 0.9),
     umi_sub_rate: float = 0.0,
+    reads_per_molecule_dispersion: float = 0.0,
+    reads_per_molecule_mean_light: float | None = None,
+    junk_rate: float = 0.0,
+    junk_length: tuple = (80, 300),
+    input_filter: dict | None = None,
+    sample_clone_alpha: float | None = None,
+    constant_region: bool = False,
+    heavy_isotype_mix: dict | None = None,
+    barcode_sub_rate: float = 0.0,
+    tso_sub_rate: float = 0.0,
+    tso_g_run_probs: list | None = None,
+    tso_indel_rate: float = 0.0,
     quiet: bool = False,
     verbose: bool = False,
 ) -> "Path":
@@ -162,6 +174,33 @@ def run(
     umi_sub_rate : float, default 0.0
         Per-base substitution rate in each read's UMI (PCR/sequencing). Error UMIs inflate UMI
         counts for the same molecule, as in uncorrected real data.
+    reads_per_molecule_dispersion : float, default 0.0
+        ``0`` = Poisson read-family depth (v2c). ``d > 0``: negative binomial with variance
+        ``mean + d * mean**2`` (PCR jackpots). Uses its own RNG stream, so wells/survival/hops are
+        unchanged for a given seed.
+    reads_per_molecule_mean_light : float | None, default None
+        Read-family mean for IGK/IGL molecules (``None`` = ``reads_per_molecule_mean``). Real heavy molecules
+        are sequenced ~5x deeper than light.
+    junk_rate : float, default 0.0
+        Non-Ig library molecules per cell molecule (valid barcode, random sequence of length in ``junk_length``),
+        released like the cell's chains. Real libraries: roughly half of the reads never reach a productive contig.
+    junk_length : (int, int), default (80, 300)
+        Length range of junk molecules.
+    input_filter : dict | None, default None
+        Restrict the input rows first, e.g. ``{"donor": "d1", "is_memory": True}`` (one donor per reaction).
+    sample_clone_alpha : float | None, default None
+        Clonal sampling (needs a ``clone_id`` input column): cells drawn without replacement with weight
+        ``clone_size**(alpha-1)``; ``None`` keeps the uniform v2c draw.
+    constant_region : bool, default False
+        Append the constant-region prefix real reads carry (to the gene-specific primer) to every template.
+    heavy_isotype_mix : dict | None, default None
+        Heavy isotype shares for ``constant_region``, e.g. ``{"IGHA1": .6, "IGHG1": .15, "IGHM": .25}`` (default IGHM).
+    barcode_sub_rate, tso_sub_rate : float, default 0.0
+        Per-base substitution rates in the read's barcode and TSO body.
+    tso_g_run_probs : list | None, default None
+        Probabilities of 0, 1, 2, ... G after the TSO body (default: the fixed GGG).
+    tso_indel_rate : float, default 0.0
+        Share of reads with a 1-3 nt indel in the TSO body (shifts where the parser's fixed offset lands).
     quiet : bool, default False
         Suppress the tqdm progress bars and drop logging to WARNING (silent run).
     verbose : bool, default False
@@ -193,19 +232,23 @@ def run(
     logger.debug("config: %s", cfg.to_dict())
     bar = pbar(total=9, desc="simplex", quiet=quiet)
 
-    cells=load_pairs(cfg.input_data, cfg.n_cells, cfg.seed); cfg.validate(actual_n_cells=cells.height)
+    cells=load_pairs(cfg.input_data, cfg.n_cells, cfg.seed, input_filter=cfg.input_filter, sample_clone_alpha=cfg.sample_clone_alpha); cfg.validate(actual_n_cells=cells.height)
     logger.info("[1/9] loaded %d cells", cells.height); bar.update(1)
+    if cfg.constant_region:
+        cells=add_constant_region(cells, cfg.heavy_isotype_mix, cfg.seed)
     cells=assign_droplets_and_barcodes(cells, cfg.cells_per_droplet_mean, cfg.cells_per_droplet_overdispersion, cfg.chemistry, cfg.barcode_pool_size, cfg.seed)
     logger.info("[2/9] assigned %d droplets/barcodes (lambda=%.2f)", cells["droplet_id"].n_unique(), cfg.cells_per_droplet_mean); bar.update(1)
     cells=assign_wells(cells, cfg.wells, cfg.seed)
     logger.info("[3/9] assigned cells to %d wells", cfg.wells); bar.update(1)
     mols, chain_status=generate_molecules(cells, cfg.recovery_rate, cfg.molecules_per_chain_mean, cfg.release_rate, cfg.umi_length, cfg.rt_sub_rate, cfg.rt_indel_rate, cfg.seed,
         release_rate_heavy=cfg.release_rate_heavy, release_rate_light=cfg.release_rate_light,
-        molecules_per_chain_mean_light=cfg.molecules_per_chain_mean_light, ambient_rate=cfg.ambient_rate)
+        molecules_per_chain_mean_light=cfg.molecules_per_chain_mean_light, ambient_rate=cfg.ambient_rate,
+        junk_rate=cfg.junk_rate, junk_length=tuple(cfg.junk_length))
     logger.info("[4/9] generated %d molecules (%d free, %d ambient)", mols.height, int(mols["is_free"].sum()) if mols.height else 0,
                 int(mols["is_ambient"].sum()) if mols.height else 0); bar.update(1)
     mols, reads=route_and_amplify(mols, cfg.wells, cfg.molecule_survival_rate, cfg.reads_per_molecule_mean, cfg.index_hop_rate, cfg.seed,
-        umi_sub_rate=cfg.umi_sub_rate)
+        umi_sub_rate=cfg.umi_sub_rate, reads_per_molecule_dispersion=cfg.reads_per_molecule_dispersion,
+        reads_per_molecule_mean_light=cfg.reads_per_molecule_mean_light)
     logger.info("[5/9] amplified to %d reads (%d molecules survived)", reads.height, int(mols["survived"].sum()) if mols.height else 0); bar.update(1)
     reads=apply_sequencing_errors(reads, cfg.sequencing_sub_rate, cfg.sequencing_indel_rate, cfg.seed)
     logger.info("[6/9] applied sequencing errors (%d total)", int(reads["n_seq_errors"].sum()) if reads.height else 0); bar.update(1)
@@ -213,7 +256,8 @@ def run(
     tcells=build_truth_cells(cells, chain_status, mols, reads)
     tbar=build_truth_barcodes(cells, tcells, comp)
     logger.info("[7/9] built truth: %d components, %d (well,barcode) keys", comp.height, tbar.height); bar.update(1)
-    built=build_merged(reads, cfg.tso, cfg.rc_fraction, cfg.variable_length, cfg.seed, truncation=cfg.truncation, fragment_rate=cfg.fragment_rate, fragment_rate_heavy=cfg.fragment_rate_heavy, fragment_keep=tuple(cfg.fragment_keep))
+    built=build_merged(reads, cfg.tso, cfg.rc_fraction, cfg.variable_length, cfg.seed, truncation=cfg.truncation, fragment_rate=cfg.fragment_rate, fragment_rate_heavy=cfg.fragment_rate_heavy, fragment_keep=tuple(cfg.fragment_keep),
+        barcode_sub_rate=cfg.barcode_sub_rate, tso_sub_rate=cfg.tso_sub_rate, tso_g_run_probs=cfg.tso_g_run_probs, tso_indel_rate=cfg.tso_indel_rate)
     logger.info("[8/9] assembled %d merged reads", built.height); bar.update(1)
     reads_paths=write_merged_fastq(built, out, show_progress=not quiet)
     write_truth(out, comp, tcells, tbar, reads if cfg.write_read_truth else None)

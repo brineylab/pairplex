@@ -11,6 +11,6 @@ from .config import SimplexConfig
 from .run import run
 from .scoring import score
 from .metrics import summarize
-from .profiles import PRINCEPS_2025
+from .profiles import PRINCEPS_2025, PRINCEPS_2026_FAMILY, PRINCEPS_2026_FULL_MEMORY_P50
 
-__all__ = ["SimplexConfig", "run", "score", "summarize", "PRINCEPS_2025"]
+__all__ = ["SimplexConfig", "run", "score", "summarize", "PRINCEPS_2025", "PRINCEPS_2026_FAMILY", "PRINCEPS_2026_FULL_MEMORY_P50"]
