@@ -69,6 +69,7 @@ def run(
     tso_sub_rate: float = 0.0,
     tso_g_run_probs: list | None = None,
     tso_indel_rate: float = 0.0,
+    expression_sigma: float = 0.0,
     quiet: bool = False,
     verbose: bool = False,
 ) -> "Path":
@@ -201,6 +202,9 @@ def run(
         Probabilities of 0, 1, 2, ... G after the TSO body (default: the fixed GGG).
     tso_indel_rate : float, default 0.0
         Share of reads with a 1-3 nt indel in the TSO body (shifts where the parser's fixed offset lands).
+    expression_sigma : float, default 0.0
+        Per-cell expression heterogeneity: both chains' molecule means are scaled by a mean-1 lognormal factor
+        ``exp(sigma*Z - sigma**2/2)``. High expressors own most molecules and therefore most ambient copies.
     quiet : bool, default False
         Suppress the tqdm progress bars and drop logging to WARNING (silent run).
     verbose : bool, default False
@@ -243,7 +247,7 @@ def run(
     mols, chain_status=generate_molecules(cells, cfg.recovery_rate, cfg.molecules_per_chain_mean, cfg.release_rate, cfg.umi_length, cfg.rt_sub_rate, cfg.rt_indel_rate, cfg.seed,
         release_rate_heavy=cfg.release_rate_heavy, release_rate_light=cfg.release_rate_light,
         molecules_per_chain_mean_light=cfg.molecules_per_chain_mean_light, ambient_rate=cfg.ambient_rate,
-        junk_rate=cfg.junk_rate, junk_length=tuple(cfg.junk_length))
+        junk_rate=cfg.junk_rate, junk_length=tuple(cfg.junk_length), expression_sigma=cfg.expression_sigma)
     logger.info("[4/9] generated %d molecules (%d free, %d ambient)", mols.height, int(mols["is_free"].sum()) if mols.height else 0,
                 int(mols["is_ambient"].sum()) if mols.height else 0); bar.update(1)
     mols, reads=route_and_amplify(mols, cfg.wells, cfg.molecule_survival_rate, cfg.reads_per_molecule_mean, cfg.index_hop_rate, cfg.seed,

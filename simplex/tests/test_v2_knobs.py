@@ -226,3 +226,23 @@ def test_read_structure_knobs_default_identical_and_effective():
     after = m["read_seq"].str.slice(36, 2)
     assert set(after.to_list()) <= {"GA", "GG", "GT", "GC", "AT", "GA"} or True
     assert (m["read_seq"].str.len_chars() < a["read_seq"].str.len_chars()).mean() > 0.3   # shorter G-runs
+
+
+# --- expression heterogeneity (H2: spreader heavies) -------------------------
+def test_expression_sigma_zero_identical_and_heavy_tail_same_mean():
+    a, _ = generate_molecules(_cells(3000), 1.0, 6.0, 0.2, 10, 0.0, 0.0, 1)
+    b, _ = generate_molecules(_cells(3000), 1.0, 6.0, 0.2, 10, 0.0, 0.0, 1, expression_sigma=0.0)
+    assert a.equals(b)
+    c, _ = generate_molecules(_cells(3000), 1.0, 6.0, 0.2, 10, 0.0, 0.0, 1, expression_sigma=1.5)
+    per_a = a.group_by("origin_cell_id").len()["len"]; per_c = c.group_by("origin_cell_id").len()["len"]
+    assert abs(c.height / a.height - 1) < 0.15                       # mean preserved
+    assert per_c.quantile(0.99) > 2 * per_a.quantile(0.99)           # heavy tail of per-cell molecules
+    # both chains of a cell share its factor
+    hl = c.group_by("origin_cell_id", "chain").len().pivot(on="chain", index="origin_cell_id", values="len").drop_nulls()
+    assert np.corrcoef(np.log(hl["0"].to_numpy()), np.log(hl["1"].to_numpy()))[0, 1] > 0.5
+
+
+def test_config_validates_hypothesis_knobs(tmp_path):
+    for bad in (dict(expression_sigma=-0.1),):
+        with pytest.raises(ValueError):
+            SimplexConfig(input_data="x", output_directory=str(tmp_path), **bad).validate(actual_n_cells=10)
