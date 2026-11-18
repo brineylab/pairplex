@@ -104,7 +104,7 @@ def build_truth_barcodes(cells,truth_cells,components):
     capk=cap.group_by(["well","barcode"]).agg([pl.col("cap_both").sum().alias("n_captured_both_resident_cells"),
         pl.col("surv_both").sum().alias("n_survived_both_resident_cells")])
     # sequenced/reference per resident cell at home key from components (resident-source rows are AT home)
-    res=components.filter(pl.col("is_resident_source"))
+    res=components.filter(pl.col("is_resident_source").fill_null(False)&(pl.col("chain")>=0))
     # observability uses TOTAL observable support at the home key (n_reads/n_umis), not only
     # cell-associated reads: a free molecule of the same cell that returns home is legit support.
     per=res.group_by([pl.col("final_well").alias("well"),"barcode","origin_cell_id"]).agg([

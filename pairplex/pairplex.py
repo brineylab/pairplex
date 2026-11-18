@@ -18,6 +18,7 @@
 import multiprocessing as mp
 import os
 import time
+from contextlib import nullcontext
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -27,6 +28,16 @@ import polars as pl
 from natsort import natsorted
 from tqdm.auto import tqdm
 
+from .pairing import (
+    DEFAULT_MIN_DOMINANCE,
+    PAIRING_MODES,
+    contract_frame,
+    pair_well,
+    support_from_metadata,
+    well_number,
+    write_contract_pairs,
+)
+from . import qc as qc_mod
 from .provenance import RunLog, run_log_path
 from .utils import available_cpus, parse_barcodes, print_splash, process_droplet
 
@@ -49,8 +60,18 @@ def run(
     merge_paired_reads: bool = False,
     receptor: str = "bcr",
     germline_database: str = "human",
+    mmseqs_threads: int = 1,
+    tso_g_max: int = 3,
+    barcode_prefer_exact: bool = True,
+    umi_collapse: str = "directional",
+    pairing: str = "scored",
+    min_dominance: float = DEFAULT_MIN_DOMINANCE,
+    collapse_clonal: bool = True,
+    legacy: bool = False,
     quiet: bool = False,
     debug: bool = False,
+    support_columns: bool = True,
+    qc: bool = True,
 ) -> list:
     """
     Run PairPlex.
@@ -105,11 +126,82 @@ def run(
         The germline database to use. Options are anything accepted by `abstar.run`, including
         custom databases if available.
 
+    mmseqs_threads : int
+        Number of threads MMseqs2 uses inside ``abstar.run``. Defaults to ``1``. Always passed explicitly: with
+        ``None`` MMseqs2 uses every online CPU of the node (ignoring ``OMP_NUM_THREADS`` and CPU affinity) and
+        crashes when its thread count exceeds the size of an abstar sub-query batch. Annotation is not the
+        bottleneck of a run, so ``1`` costs little. Does not change results.
+
+    tso_g_max : int
+        Maximum number of Gs removed from the start of the insert, after the fixed TSO prefix
+        ``TTTCTTATAT`` (read positions 26-35). The 10x TSO ends in rGrGrG, so the default is ``3``;
+        genuine 5' Gs of the transcript beyond the TSO's run are kept. v2-base removed every leading
+        G (``lstrip("G")``).
+
+    barcode_prefer_exact : bool
+        Read orientation choice. If ``True`` (default), an exact barcode whitelist hit in either orientation
+        (forward or reverse complement) wins over a Hamming-1 correction in the other; corrections are used only
+        when neither orientation is exact. Ties keep the forward orientation. Orientation counts are written to
+        the run log (``stats.barcode_orientation``). v2-base took the first orientation whose barcode corrected.
+
+    umi_collapse : str
+        UMI error correction, applied within each (well, droplet barcode) before any UMI counting.
+        ``"directional"`` (default) uses the UMI-tools directional adjacency method: UMI ``b`` is
+        absorbed by UMI ``a`` when they differ at one position and ``reads(a) >= 2 * reads(b) - 1``,
+        transitively, processing UMIs by descending read count (see :mod:`pairplex.umi`, which also
+        documents how UMIs containing ``N`` are handled). The metadata ``umis`` column is then the
+        corrected count, a ``umis_raw`` column holds the count before collapsing, and
+        ``min_cluster_umis`` filters on corrected counts. ``"none"`` counts raw UMIs (v2-base
+        behaviour, no ``umis_raw`` column).
+
+    pairing : str
+        How heavy and light chains of a (well, barcode) are paired. ``"scored"`` (default): rank
+        the productive heavy chains and the productive light chains (IGK and IGL together) by
+        UMIs (then reads) and emit the top heavy + top light when each group passes
+        ``min_dominance``; every pair gets a ``confidence`` and a ``margin`` (see
+        ``pairplex.pairing``), and all wells are also written to ``pairs/pairs.parquet``.
+        ``"exact"``: the ``v2-base`` rule, keep only barcodes with exactly one heavy and one
+        light chain; no ``pairs/pairs.parquet``.
+
+    min_dominance : float
+        Scored pairing only. The top chain of each locus group must have at least this many
+        times the UMIs of the second-best chain. Defaults to ``2.0`` (top chain holds >= 2/3 of
+        a 2-chain group). Values <= 1 accept any split (ties broken by reads).
+
+    collapse_clonal : bool
+        Scored pairing only. Before ranking, merge same-locus contigs of a (well, barcode) that
+        share V gene, J gene and CDR3 aa (one chain split into several consensus clusters, or
+        clonal relatives), summing their UMIs, so they do not compete. Defaults to ``True``.
+
+    legacy : bool
+        If ``True``, reproduce v2-base exactly: forces ``tso_g_max`` to strip every leading G
+        (``lstrip("G")``), ``barcode_prefer_exact=False``, ``umi_collapse="none"``, ``support_columns=False``,
+        ``qc=False`` and ``pairing="exact"``.
+        Row order is not a legacy behaviour: in every mode (``legacy=True`` included) reads enter
+        clustering in input-file order and every output is written in a fixed order (see
+        Notes), whatever the worker count. v2-base collected worker results with ``as_completed``,
+        so its read order, and hence greedy-clustering and POA tie-breaks, varied from run to
+        run; the fixed order is one of the outcomes v2-base could produce.
+
     quiet : bool
         Whether to suppress the progress bar and other update messages.
 
     debug : bool
         If ``True``, all temporary files will be retained to ease debugging.
+
+    support_columns : bool
+        If ``True`` (default), the annotated outputs carry the cluster support of each contig:
+        ``umis``, ``reads``, ``cluster_fraction``, ``barcode`` and ``contig`` in the unpaired
+        outputs, ``umis:0/1``, ``reads:0/1``, ``cluster_fraction:0/1`` (etc.) in the paired outputs.
+        abstar's ``umi`` column, which is always null for PairPlex consensus contigs, is dropped.
+        Pairing is unchanged.
+
+    qc : bool
+        If ``True`` (default), write ``qc/stage_counts.csv`` (drop counts at every stage, per
+        well and in total), ``qc/annotation_failures.csv`` (abstar failure and exclusion modes)
+        and ``qc/report.json`` / ``qc/report.md`` (fragment fraction, UMI error signature,
+        ambient proxy, leakage by chain, pair confidence, clonal light-chain coherence).
+        Pairing is unchanged.
 
 
     Returns
@@ -117,8 +209,39 @@ def run(
     list
         A list of paths to the output files.
 
+    Notes
+    -----
+    Determinism: the same input and options give the same outputs, independent of
+    ``PAIRPLEX_MAX_WORKERS``. Barcode-parsing chunks are concatenated in chunk (= input) order, so
+    the reads of a droplet reach clustering and POA in input-file order. Droplets are processed
+    in sorted barcode order, so ``metadata/`` and ``consensus/`` rows are ordered by barcode, then
+    contig index. Annotated contigs are naturally sorted by ``sequence_id`` before they are
+    written, and paired outputs are naturally sorted by barcode.
+
     """
     parameters = dict(locals())  # captured first: exactly the arguments of this call
+    if not isinstance(mmseqs_threads, int) or mmseqs_threads < 1:
+        raise ValueError(f"mmseqs_threads must be a positive integer, got {mmseqs_threads!r}")
+    if legacy:
+        tso_g_max = None  # v2-base: lstrip("G")
+        barcode_prefer_exact = False  # v2-base: first orientation that corrects
+    elif not isinstance(tso_g_max, int) or tso_g_max < 0:
+        raise ValueError(f"tso_g_max must be a non-negative integer, got {tso_g_max!r}")
+
+    # legacy mode forces every v2 behaviour option to its v2-base value
+    if legacy:
+        umi_collapse = "none"
+        support_columns = False
+        qc = False
+        pairing = "exact"
+    if umi_collapse not in ("directional", "none"):
+        raise ValueError(
+            f"umi_collapse must be 'directional' or 'none', got {umi_collapse!r}"
+        )
+    parameters["umi_collapse_effective"] = umi_collapse
+    if pairing not in PAIRING_MODES:
+        raise ValueError(f"pairing must be one of {PAIRING_MODES}, got {pairing!r}")
+    contract_frames = []
 
     # print splash screen
     if not quiet:
@@ -212,11 +335,34 @@ def run(
     running_total_printer = tqdm(total=0, bar_format="{desc}", position=2, leave=True)
     blank2_printer = tqdm(total=0, bar_format=" ", position=3, leave=True)
     all_valid_barcodes = 0
+    orientation_counts = {}
     all_consensus_sequences = 0
     all_pairs = 0
     running_total_printer.set_description_str(
         f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
     )
+
+    # QC accumulators (qc=True): per-well stage counts, abstar failure modes, fragments, UMI stats
+    qc_rows, qc_failures, qc_fragments, qc_umis, qc_wells = [], [], {}, [], []
+
+    def finish_well(to_delete, printers):
+        """End of one input file (also on early exits): delete temp files, close its printers, advance."""
+        if not debug:
+            main_pbar.set_postfix_str("cleaning up", refresh=True)
+            for f in to_delete:
+                if f is not None:
+                    if os.path.exists(f):
+                        os.remove(f)
+            if os.path.isdir(temp_directory) and not os.listdir(temp_directory):
+                os.rmdir(temp_directory)
+
+        # close out sub-progress bars
+        time.sleep(2)
+        for printer in printers:
+            printer.close()
+
+        # update the main progress bar
+        main_pbar.update(1)
 
     # initialize the Process Pool
     with ProcessPoolExecutor(
@@ -226,6 +372,7 @@ def run(
             # Checking for empty file, as this will break later steps
             if os.path.getsize(input_file) == 0:
                 main_pbar.set_postfix_str("partitioning barcodes", refresh=True)
+                main_pbar.update(1)
                 continue
 
             to_delete = []
@@ -234,11 +381,16 @@ def run(
             name_printer = tqdm(total=0, bar_format="{desc}", position=4, leave=False)
             seqs_printer = tqdm(total=0, bar_format="{desc}", position=5, leave=False)
             valids_printer = tqdm(total=0, bar_format="{desc}", position=6, leave=False)
+            printers = [name_printer, seqs_printer, valids_printer]
 
             # process the input file
             input_file = Path(input_file)
             name = input_file.stem
             name_printer.set_description_str(f"---- {name} ----")
+            if qc:
+                wc = qc_mod.new_counts(name)
+                qc_rows.append(wc)
+                qc_wells.append(name)
 
             # check to make sure the input file is FASTA/Q (and not empty)
             if abutils.io.determine_fastx_format(str(input_file)) is None:
@@ -257,6 +409,8 @@ def run(
             for s in abutils.io.parse_fastx(str(input_file)):
                 input_count += 1
             seqs_printer.set_description_str(f"{input_count} input sequences")
+            if qc:
+                wc["input_reads"] = wc["dropped_orientation_or_barcode"] = input_count
 
             # split input file into chunks
             main_pbar.set_postfix_str("splitting input file", refresh=True)
@@ -273,14 +427,22 @@ def run(
 
             main_pbar.set_postfix_str("parsing barcodes", refresh=True)
             parquet_chunks = []
+            parse_kwargs = {"whitelist_path": whitelist_path, "tso_g_max": tso_g_max}
+            if barcode_prefer_exact:
+                parse_kwargs.update(prefer_exact=True, return_counts=True)
+            else:
+                parse_kwargs.update(prefer_exact=False)
             futures = [
-                executor.submit(
-                    parse_barcodes, chunk, temp_directory, whitelist_path=whitelist_path
-                )
+                executor.submit(parse_barcodes, chunk, temp_directory, **parse_kwargs)
                 for chunk in fastq_chunks
             ]
-            for future in as_completed(futures):
+            # results in chunk order (not completion order): reads keep their input order
+            for future in futures:
                 res = future.result()
+                if barcode_prefer_exact:
+                    res, counts = res
+                    for k, v in counts.items():
+                        orientation_counts[k] = orientation_counts.get(k, 0) + v
                 if res is not None:
                     parquet_chunks.append(res)
             to_delete.extend(parquet_chunks)
@@ -291,12 +453,17 @@ def run(
                 running_total_printer.set_description_str(
                     f"valid barcodes: {all_valid_barcodes} | consensus sequences: {all_consensus_sequences} | pairs: {all_pairs}"
                 )
+                finish_well(to_delete, printers)
                 continue
             concat_parquet = abutils.io.concatenate_parquet(
                 parquet_chunks, parsed_directory / f"{name}.parquet"
             )
             df = pl.read_parquet(concat_parquet)
             seqs_with_barcodes = df.shape[0]
+            if qc:
+                wc.update(qc_mod.read_stage_counts(input_count, df))
+                wc.update(qc_mod.barcode_stage_counts(df, min_cluster_reads))
+                qc_umis.append(qc_mod.umi_hamming1_stats(df))
             all_valid_barcodes += seqs_with_barcodes
             valids_printer.set_description_str(
                 f"{seqs_with_barcodes} sequences with valid barcodes"
@@ -336,6 +503,7 @@ def run(
             consensus_printer = tqdm(
                 total=0, bar_format="{desc}", position=8, leave=False
             )
+            printers.append(consensus_printer)
 
             # make consensus sequences for each droplet
             futures = []
@@ -346,10 +514,11 @@ def run(
                 "min_cluster_fraction": min_cluster_fraction,
                 "consensus_downsample": consensus_downsample,
                 "clustering_threshold": clustering_threshold,
+                "umi_collapse": umi_collapse,
                 "quiet": quiet,
                 "debug": debug,
             }
-            for bc, bc_df in partitions.items():
+            for bc, bc_df in sorted(partitions.items()):  # fixed droplet order
                 if isinstance(bc, tuple):
                     bc = bc[0]
                 futures.append(
@@ -363,20 +532,31 @@ def run(
 
             # collect metadata
             metadata = []
+            droplet_results = [None] * len(futures)
+            future_index = {f: i for i, f in enumerate(futures)}
             droplet_count = 0
             consensus_count = 0
             for future in as_completed(futures):
                 res = future.result()
+                droplet_results[future_index[future]] = res
                 if res is not None:
-                    metadata.extend(res)
                     droplet_count += 1
                     consensus_count += len([r for r in res if r["pass_filters"]])
                 consensus_pbar.update(1)
                 consensus_printer.set_description_str(
                     f"{droplet_count} droplet barcodes | {consensus_count} consensus sequences"
                 )
+            for res in droplet_results:  # submission (= sorted barcode) order
+                if res is not None:
+                    metadata.extend(res)
             metadata_df = pl.DataFrame(metadata)
             consensus_pbar.close()
+            if qc:
+                wc.update(
+                    qc_mod.cluster_stage_counts(
+                        metadata_df, min_cluster_reads, min_cluster_umis, min_cluster_fraction
+                    )
+                )
 
             # write metadata to file
             metadata_file = metadata_directory / f"{name}.csv"
@@ -389,6 +569,7 @@ def run(
                     f"{droplet_count} droplet barcodes | 0 consensus sequences"
                 )
                 consensus_file.touch()
+                finish_well(to_delete, printers)
                 continue
             filtered_df = metadata_df.filter(pl.col("pass_filters"))
             with consensus_file.open("w") as f:
@@ -408,19 +589,27 @@ def run(
             main_pbar.set_postfix_str("annotating sequences", refresh=True)
             # failsafe for empty consensus files
             if consensus_count <= 1 or os.path.getsize(consensus_file) == 0: # Changed consensus_count to include 1 (a single sequence can't be paired)
+                finish_well(to_delete, printers)
                 continue
-            # guard against MMSeqs threading issues with small datasets
             consensus_count = filtered_df.shape[0]
-            mmseqs_threads = None
-            if consensus_count < 1000:
-                mmseqs_threads = 1
-            # run abstar
-            sequences = abstar.run(
-                sequences=str(consensus_file),
-                germline_database=germline_database,
-                receptor=receptor,
-                mmseqs_threads=mmseqs_threads,
-            )
+            # run abstar (always with an explicit MMseqs2 thread count, see docstring)
+            with qc_mod.capture_abstar_failures() if qc else nullcontext([]) as record_failures:
+                sequences = abstar.run(
+                    sequences=str(consensus_file),
+                    germline_database=germline_database,
+                    receptor=receptor,
+                    mmseqs_threads=mmseqs_threads,
+                )
+            if isinstance(sequences, list):  # fixed row order for every annotated output
+                sequences = natsorted(sequences, key=lambda s: s.id)
+            if qc:
+                ann_df = qc_mod.annotation_frame(sequences)
+                n_rec = len(record_failures)
+                wc.update(qc_mod.annotation_stage_counts(ann_df, consensus_count, n_rec))
+                qc_failures.extend(qc_mod.annotation_failure_rows(name, ann_df, record_failures))
+                qc_mod.merge_fragment_counts(qc_fragments, qc_mod.fragment_counts(ann_df, n_rec))
+            if support_columns:
+                qc_mod.add_support_columns(sequences, metadata_df)
 
             if len(sequences) > 1: # A single sequence cannot be paired and will cause issues
                 
@@ -443,13 +632,25 @@ def run(
                 pairs_printer = tqdm(total=0, bar_format="{desc}", position=9, leave=False)
                 paired_airr_file = annotated_directory / f"{name}_paired.tsv"
                 paired_parquet_file = annotated_directory / f"{name}_paired.parquet"
-                pairs = abutils.tl.assign_pairs(sequences, delim="_", delim_occurance=-1)
-                pairs = [p for p in pairs if len(p.heavies) == 1 and len(p.lights) == 1]
-                pairs_printer.set_description_str(f"{len(pairs)} paired sequences")
-                abutils.io.to_airr(pairs, str(paired_airr_file), drop_na_columns=False)
-                abutils.io.to_parquet(
-                    pairs, str(paired_parquet_file), drop_na_columns=False
+                if qc:  # chain composition before any pairing rule
+                    wc.update(qc_mod.chain_composition_counts(
+                        abutils.tl.assign_pairs(sequences, delim="_", delim_occurance=-1)))
+                pairs = pair_well(
+                    sequences,
+                    paired_airr_file,
+                    paired_parquet_file,
+                    mode=pairing,
+                    support=support_from_metadata(metadata_df),
+                    min_dominance=min_dominance,
+                    collapse_clonal=collapse_clonal,
                 )
+                if qc:
+                    wc["emitted_pairs"] = len(pairs)
+                pairs_printer.set_description_str(f"{len(pairs)} paired sequences")
+                if pairing == "scored":
+                    contract_frames.append(
+                        contract_frame(paired_parquet_file, well_number(name))
+                    )
 
                 all_pairs += len(pairs)
                 running_total_printer.set_description_str(
@@ -460,26 +661,19 @@ def run(
             #      cleanup
             # --------------------
 
-            if not debug:
-                main_pbar.set_postfix_str("cleaning up", refresh=True)
-                for f in to_delete:
-                    if f is not None:
-                        if os.path.exists(f):
-                            os.remove(f)
-                if os.path.isdir(temp_directory) and not os.listdir(temp_directory):
-                    os.rmdir(temp_directory)
-
-            # close out sub-progress bars
-            time.sleep(2)
-            name_printer.close()
-            seqs_printer.close()
-            valids_printer.close()
-            consensus_printer.close()
             if pairs_printer is not None:
-                pairs_printer.close()
+                printers.append(pairs_printer)
+            finish_well(to_delete, printers)
 
-            # update the main progress bar
-            main_pbar.update(1)
+    n_contract_pairs = None
+    if pairing == "scored":
+        n_contract_pairs = write_contract_pairs(
+            contract_frames, output_directory / "pairs" / "pairs.parquet"
+        )
+    if qc:
+        qc_mod.write_qc(
+            output_directory, qc_rows, qc_failures, qc_fragments, qc_umis, qc_wells
+        )
 
     run_log.finish(
         stats={
@@ -487,6 +681,8 @@ def run(
             "valid_barcodes": all_valid_barcodes,
             "consensus_sequences": all_consensus_sequences,
             "pairs": all_pairs,
+            **({"pairs_parquet_rows": n_contract_pairs} if n_contract_pairs is not None else {}),
+            **({"barcode_orientation": orientation_counts} if barcode_prefer_exact else {}),
         }
     )
 

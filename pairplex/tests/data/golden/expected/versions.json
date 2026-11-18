@@ -1,0 +1,11 @@
+{
+ "code_commit": "a8b6376cd9e3333aa6d6b1c1415bc6dddc8a0233",
+ "abstar": "0.9.0",
+ "run_kwargs": {},
+ "rows": {
+  "metadata": 140,
+  "consensus": 111,
+  "unpaired": 111,
+  "paired": 24
+ }
+}

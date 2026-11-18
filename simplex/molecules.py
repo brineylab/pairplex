@@ -14,7 +14,7 @@ _MOL_SCHEMA={"molecule_id":pl.Int64,"parent_molecule_id":pl.Int64,"origin_cell_i
     "survived":pl.Boolean,"cdna":pl.Utf8,"is_ambient":pl.Boolean}
 def generate_molecules(cells,recovery_rate,molecules_per_chain_mean,release_rate,umi_length,rt_sub_rate,rt_indel_rate,seed,
                        release_rate_heavy=None,release_rate_light=None,molecules_per_chain_mean_light=None,
-                       ambient_rate=0.0):
+                       ambient_rate=0.0,junk_rate=0.0,junk_length=(80,300)):
     """Simulate RT capture per cell/chain and split molecules into resident vs free (ambient).
 
     For each chain (0, 1) independently: each cell captures the chain with probability
@@ -42,6 +42,12 @@ def generate_molecules(cells,recovery_rate,molecules_per_chain_mean,release_rate
     barcode of a uniformly chosen droplet among those holding cells, a fresh UMI, its own RT error,
     and is free (`is_free=True`, routed to a random well) with `is_ambient=True`. Unlike release,
     ambient ADDS molecules and moves a chain to a different barcode.
+
+    Junk axis (`junk_rate`, default 0): non-Ig library molecules (mispriming, primer artefacts) with a valid barcode.
+    `Poisson(junk_rate * n_cell_molecules)` molecules, each owned by the cell of a uniformly chosen cell molecule
+    (barcode, home well), random sequence of uniform length in `junk_length`, released like that cell's chains at
+    `release_rate`; `chain=-1`, `locus="junk"`. They never match a truth chain, so they cost yield and compute and
+    dilute read/UMI statistics without being scorable as pairs.
 
     Returns `(molecules, chain_status)`: `molecules` is the per-molecule truth record
     (`molecule_id`, `parent_molecule_id` initialized equal to it, `amplification_well`
@@ -92,6 +98,18 @@ def generate_molecules(cells,recovery_rate,molecules_per_chain_mean,release_rate
                 pl.Series("umi",random_dna(arng,na,umi_length)),pl.Series("cdna",cdna),
                 pl.lit(True).alias("is_free"),pl.lit(True).alias("is_ambient")])
             m=pl.concat([m,amb.select(m.columns)])
+    if junk_rate>0 and m.height:
+        jrng=rng_for(seed,"junk"); cellm=m.filter(~pl.col("is_ambient"))
+        nj=int(jrng.poisson(junk_rate*cellm.height))
+        if nj:
+            src=cellm[jrng.integers(0,cellm.height,size=nj)]
+            lo,hi=junk_length; L=jrng.integers(lo,hi+1,size=nj)
+            full=random_dna(jrng,nj,int(hi))
+            seqs=[s[:l] for s,l in zip(full,L)]
+            junk=src.with_columns([pl.lit(-1).cast(pl.Int8).alias("chain"),pl.lit("junk").alias("locus"),
+                pl.Series("umi",random_dna(jrng,nj,umi_length)),pl.Series("cdna",seqs),
+                pl.Series("is_free",jrng.random(nj)<release_rate),pl.lit(False).alias("is_ambient")])
+            m=pl.concat([m,junk.select(m.columns)])
     m=m.with_row_index("molecule_id").with_columns([
         pl.col("molecule_id").cast(pl.Int64),pl.col("molecule_id").cast(pl.Int64).alias("parent_molecule_id"),
         pl.lit(0).cast(pl.Int64).alias("amplification_well"), pl.lit(False).alias("survived")])
