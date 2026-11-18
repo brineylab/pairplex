@@ -52,6 +52,7 @@ def run(
     mmseqs_threads: int = 1,
     tso_g_max: int = 3,
     barcode_prefer_exact: bool = True,
+    umi_collapse: str = "directional",
     legacy: bool = False,
     quiet: bool = False,
     debug: bool = False,
@@ -127,9 +128,19 @@ def run(
         when neither orientation is exact. Ties keep the forward orientation. Orientation counts are written to
         the run log (``stats.barcode_orientation``). v2-base took the first orientation whose barcode corrected.
 
+    umi_collapse : str
+        UMI error correction, applied within each (well, droplet barcode) before any UMI counting.
+        ``"directional"`` (default) uses the UMI-tools directional adjacency method: UMI ``b`` is
+        absorbed by UMI ``a`` when they differ at one position and ``reads(a) >= 2 * reads(b) - 1``,
+        transitively, processing UMIs by descending read count (see :mod:`pairplex.umi`, which also
+        documents how UMIs containing ``N`` are handled). The metadata ``umis`` column is then the
+        corrected count, a ``umis_raw`` column holds the count before collapsing, and
+        ``min_cluster_umis`` filters on corrected counts. ``"none"`` counts raw UMIs (v2-base
+        behaviour, no ``umis_raw`` column).
+
     legacy : bool
         If ``True``, reproduce v2-base exactly: forces ``tso_g_max`` to strip every leading G
-        (``lstrip("G")``) and ``barcode_prefer_exact=False``.
+        (``lstrip("G")``), ``barcode_prefer_exact=False`` and ``umi_collapse="none"``.
 
     quiet : bool
         Whether to suppress the progress bar and other update messages.
@@ -152,6 +163,15 @@ def run(
         barcode_prefer_exact = False  # v2-base: first orientation that corrects
     elif not isinstance(tso_g_max, int) or tso_g_max < 0:
         raise ValueError(f"tso_g_max must be a non-negative integer, got {tso_g_max!r}")
+
+    # legacy mode forces every v2 behaviour option to its v2-base value
+    if legacy:
+        umi_collapse = "none"
+    if umi_collapse not in ("directional", "none"):
+        raise ValueError(
+            f"umi_collapse must be 'directional' or 'none', got {umi_collapse!r}"
+        )
+    parameters["umi_collapse_effective"] = umi_collapse
 
     # print splash screen
     if not quiet:
@@ -387,6 +407,7 @@ def run(
                 "min_cluster_fraction": min_cluster_fraction,
                 "consensus_downsample": consensus_downsample,
                 "clustering_threshold": clustering_threshold,
+                "umi_collapse": umi_collapse,
                 "quiet": quiet,
                 "debug": debug,
             }

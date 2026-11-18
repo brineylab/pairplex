@@ -116,6 +116,13 @@ def version():
     help="Prefer the read orientation with an exact barcode whitelist hit over a Hamming-1 correction in the other",
 )
 @click.option(
+    "--umi-collapse",
+    "umi_collapse",
+    type=click.Choice(["directional", "none"]),
+    default="directional",
+    help="UMI error correction within each (well, barcode): UMI-tools directional (default) or none",
+)
+@click.option(
     "--legacy",
     is_flag=True,
     help="Reproduce v2-base behaviour exactly (overrides the options of newer fixes)",
@@ -143,6 +150,7 @@ def run(
     mmseqs_threads: int,
     tso_g_max: int,
     barcode_prefer_exact: bool,
+    umi_collapse: str,
     legacy: bool,
     quiet: bool,
     debug: bool,
@@ -164,6 +172,7 @@ def run(
         mmseqs_threads=mmseqs_threads,
         tso_g_max=tso_g_max,
         barcode_prefer_exact=barcode_prefer_exact,
+        umi_collapse=umi_collapse,
         legacy=legacy,
         quiet=quiet,
         debug=debug,
