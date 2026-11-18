@@ -72,6 +72,46 @@ def fmt(v, pct=False):
     return f"{v:.3f}" if isinstance(v, float) else str(v)
 
 
+REAL_EST_TOL = 0.01
+
+
+def best_set(d: dict, key: str):
+    """(set name, count) of the output set with the most correct pairs (sims: n_correct; real: est_correct)."""
+    cands = [(s, g(d, s, key)) for s in SETS if g(d, s, key) is not None]
+    return max(cands, key=lambda x: x[1]) if cands else (None, None)
+
+
+def correct_pairs_section(new: dict, base: dict) -> bool:
+    """Success metric (user, 2026-11-18): the number of correct pairs recovered, in the best output set of a run.
+    Sims: n_correct from truth. Real: est_correct = pairs x sibling-agreement precision (sibling.py).
+    PASS = total over sims >= baseline and total over real >= baseline - REAL_EST_TOL (the sibling estimate moved by
+    +0.7% on an ordering-only change, D5-determinism-v1 vs main-91397e0)."""
+    print("\n=== CORRECT PAIRS (success metric: best output set per dataset) ===")
+    tot = {"sim": [0, 0], "real": [0, 0]}
+    for ds in sorted(set(new) & set(base)):
+        kind = "sim" if ds.startswith(("sim", "v2d")) else "real"
+        key = "n_correct" if kind == "sim" else "est_correct"
+        bs, bv = best_set(base[ds], key)
+        ns, nv = best_set(new[ds], key)
+        if bv is None or nv is None:
+            print(f"   {ds:<12} n/a (metric missing; rescore needed)")
+            continue
+        tot[kind][0] += bv
+        tot[kind][1] += nv
+        delta = nv - bv
+        tag = "SAME" if delta == 0 else ("UP" if delta > 0 else "DOWN")
+        print(f"   {ds:<12} {bv:>7} ({bs}) -> {nv:>7} ({ns})   {delta:+d} ({100 * delta / max(bv, 1):+.1f}%) {tag}"
+              + ("   [estimate]" if kind == "real" else ""))
+    ok = True
+    for kind in ("sim", "real"):
+        b, n = tot[kind]
+        if b or n:
+            good = n >= b if kind == "sim" else n >= b * (1 - REAL_EST_TOL)
+            ok &= good
+            print(f"   total {kind:<5} {b:>7} -> {n:>7}   {n - b:+d} ({100 * (n - b) / max(b, 1):+.1f}%) {'PASS' if good else 'FAIL'}")
+    return ok
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("name")
@@ -126,8 +166,10 @@ def main():
         print(f"\n[{mark}] {ds} / {s}" + (f" (vs baseline {bs})" if bs != s else ""))
         for k in cur:
             print(f"   {k:<15} {fmt(ref.get(k)):>10} -> {fmt(cur[k]):>10}")
-    print(f"\nruntime: {t_base}s -> {t_new}s ({'PASS' if rt_ok else 'FAIL' if rt_ok is False else 'n/a'}, limit 1.5x)")
-    overall = all(v in (True, "same", "noise") for v in verdicts) and rt_ok is not False and bool(verdicts)
+    print(f"\nruntime: {t_base}s -> {t_new}s ({'ok' if rt_ok else 'SLOW (>1.5x)' if rt_ok is False else 'n/a'}; reported, not gating)")
+    old_rule = all(v in (True, "same", "noise") for v in verdicts) and rt_ok is not False and bool(verdicts)
+    overall = correct_pairs_section(new, base)
+    print(f"(old per-set rule, for reference only: {'PASS' if old_rule else 'FAIL'})")
     # lineage retention on real memory reactions (report + REVIEW flag, not part of the pass rule)
     try:
         from lineage import SIZES, compare_lineages
@@ -145,7 +187,7 @@ def main():
         if not r["ok"]:
             review.append(key)
             print("   lost lineages (>=5 cells) [clone, size, recovered]:", r[">=5"]["lost_examples"])
-    print(f"OVERALL: {'PASS' if overall else 'FAIL'}  (a set passes on its own rule; every scored set must pass)"
+    print(f"OVERALL: {'PASS' if overall else 'FAIL'}  (correct pairs: sim total and real estimated total must not drop)"
           + (f"  | LINEAGE REVIEW: {', '.join(review)}" if review else ""))
 
 

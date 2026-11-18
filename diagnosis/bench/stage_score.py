@@ -73,6 +73,9 @@ def per_well_pairs(out: Path) -> pl.DataFrame | None:
     fs = sorted((out / "annotated").glob("*_paired.parquet")) if (out / "annotated").exists() else []
     cols = ["name", "sequence_id:0", "sequence_id:1", "v_gene:0", "v_gene:1", "cdr3_aa:0", "locus:0", "locus:1"]
     fs = readable_pairs(fs, cols)
+    if fs:  # sibling-agreement columns when present
+        extra = [c for c in ("junction:0", "sequence:0", "junction:1", "sequence:1") if all(c in pl.read_parquet_schema(f) for f in fs)]
+        cols = cols + extra
     if not fs:
         return None
     return pl.concat([pl.read_parquet(f, columns=cols) for f in fs], how="vertical_relaxed")
@@ -118,16 +121,27 @@ def score_sim(out: Path, truth: Path) -> dict:
     return res
 
 
+def real_metrics(df: pl.DataFrame) -> dict:
+    """Clonal purity plus sibling-agreement precision and the estimated number of correct pairs."""
+    from sibling import sibling_precision
+
+    r = purity(df)
+    sib = sibling_precision(df)
+    r.update({"sib_" + k: v for k, v in sib.items() if k != "est_correct"})
+    r["est_correct"] = sib.get("est_correct")
+    return r
+
+
 def score_real(out: Path) -> dict:
     res = {}
     pw = per_well_pairs(out)
     if pw is not None:
-        res["per_well"] = purity(heavy_first(pw))
+        res["per_well"] = real_metrics(heavy_first(pw))
     for key, f in (("pooled", out / "pooled" / "pooled_pairs.parquet"), ("pairs", out / "pairs" / "pairs.parquet")):
         if not f.exists():
             continue
         p = heavy_first(pl.read_parquet(f))
-        res[key] = purity(p)
+        res[key] = real_metrics(p)
         res[key + "_by_conf"] = conf_bins(p, purity)
     return res
 
