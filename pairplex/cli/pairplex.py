@@ -123,6 +123,25 @@ def version():
     help="UMI error correction within each (well, barcode): UMI-tools directional (default) or none",
 )
 @click.option(
+    "--pairing",
+    type=click.Choice(["scored", "exact"]),
+    default="scored",
+    help="Per-well pairing rule: 'scored' resolves multi-chain barcodes by UMI dominance and scores each pair; 'exact' keeps only 1 heavy + 1 light barcodes (v2-base)",
+)
+@click.option(
+    "--min-dominance",
+    "min_dominance",
+    type=float,
+    default=2.0,
+    help="Scored pairing: top chain of each locus group needs >= this many times the UMIs of the second-best chain",
+)
+@click.option(
+    "--collapse-clonal/--no-collapse-clonal",
+    "collapse_clonal",
+    default=True,
+    help="Scored pairing: merge same-locus contigs sharing V, J and CDR3 aa before ranking",
+)
+@click.option(
     "--legacy",
     is_flag=True,
     help="Reproduce v2-base behaviour exactly (overrides the options of newer fixes)",
@@ -161,6 +180,9 @@ def run(
     tso_g_max: int,
     barcode_prefer_exact: bool,
     umi_collapse: str,
+    pairing: str,
+    min_dominance: float,
+    collapse_clonal: bool,
     legacy: bool,
     quiet: bool,
     debug: bool,
@@ -185,6 +207,9 @@ def run(
         tso_g_max=tso_g_max,
         barcode_prefer_exact=barcode_prefer_exact,
         umi_collapse=umi_collapse,
+        pairing=pairing,
+        min_dominance=min_dominance,
+        collapse_clonal=collapse_clonal,
         legacy=legacy,
         quiet=quiet,
         debug=debug,

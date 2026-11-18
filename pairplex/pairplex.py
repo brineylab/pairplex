@@ -28,6 +28,15 @@ import polars as pl
 from natsort import natsorted
 from tqdm.auto import tqdm
 
+from .pairing import (
+    DEFAULT_MIN_DOMINANCE,
+    PAIRING_MODES,
+    contract_frame,
+    pair_well,
+    support_from_metadata,
+    well_number,
+    write_contract_pairs,
+)
 from . import qc as qc_mod
 from .provenance import RunLog, run_log_path
 from .utils import available_cpus, parse_barcodes, print_splash, process_droplet
@@ -55,6 +64,9 @@ def run(
     tso_g_max: int = 3,
     barcode_prefer_exact: bool = True,
     umi_collapse: str = "directional",
+    pairing: str = "scored",
+    min_dominance: float = DEFAULT_MIN_DOMINANCE,
+    collapse_clonal: bool = True,
     legacy: bool = False,
     quiet: bool = False,
     debug: bool = False,
@@ -142,10 +154,29 @@ def run(
         ``min_cluster_umis`` filters on corrected counts. ``"none"`` counts raw UMIs (v2-base
         behaviour, no ``umis_raw`` column).
 
+    pairing : str
+        How heavy and light chains of a (well, barcode) are paired. ``"scored"`` (default): rank
+        the productive heavy chains and the productive light chains (IGK and IGL together) by
+        UMIs (then reads) and emit the top heavy + top light when each group passes
+        ``min_dominance``; every pair gets a ``confidence`` and a ``margin`` (see
+        ``pairplex.pairing``), and all wells are also written to ``pairs/pairs.parquet``.
+        ``"exact"``: the ``v2-base`` rule, keep only barcodes with exactly one heavy and one
+        light chain; no ``pairs/pairs.parquet``.
+
+    min_dominance : float
+        Scored pairing only. The top chain of each locus group must have at least this many
+        times the UMIs of the second-best chain. Defaults to ``2.0`` (top chain holds >= 2/3 of
+        a 2-chain group). Values <= 1 accept any split (ties broken by reads).
+
+    collapse_clonal : bool
+        Scored pairing only. Before ranking, merge same-locus contigs of a (well, barcode) that
+        share V gene, J gene and CDR3 aa (one chain split into several consensus clusters, or
+        clonal relatives), summing their UMIs, so they do not compete. Defaults to ``True``.
+
     legacy : bool
         If ``True``, reproduce v2-base exactly: forces ``tso_g_max`` to strip every leading G
-        (``lstrip("G")``), ``barcode_prefer_exact=False``, ``umi_collapse="none"``, ``support_columns=False`` and
-        ``qc=False``.
+        (``lstrip("G")``), ``barcode_prefer_exact=False``, ``umi_collapse="none"``, ``support_columns=False``,
+        ``qc=False`` and ``pairing="exact"``.
 
     quiet : bool
         Whether to suppress the progress bar and other update messages.
@@ -188,11 +219,15 @@ def run(
         umi_collapse = "none"
         support_columns = False
         qc = False
+        pairing = "exact"
     if umi_collapse not in ("directional", "none"):
         raise ValueError(
             f"umi_collapse must be 'directional' or 'none', got {umi_collapse!r}"
         )
     parameters["umi_collapse_effective"] = umi_collapse
+    if pairing not in PAIRING_MODES:
+        raise ValueError(f"pairing must be one of {PAIRING_MODES}, got {pairing!r}")
+    contract_frames = []
 
     # print splash screen
     if not quiet:
@@ -550,17 +585,25 @@ def run(
                 pairs_printer = tqdm(total=0, bar_format="{desc}", position=9, leave=False)
                 paired_airr_file = annotated_directory / f"{name}_paired.tsv"
                 paired_parquet_file = annotated_directory / f"{name}_paired.parquet"
-                pairs = abutils.tl.assign_pairs(sequences, delim="_", delim_occurance=-1)
-                if qc:
-                    wc.update(qc_mod.chain_composition_counts(pairs))
-                pairs = [p for p in pairs if len(p.heavies) == 1 and len(p.lights) == 1]
+                if qc:  # chain composition before any pairing rule
+                    wc.update(qc_mod.chain_composition_counts(
+                        abutils.tl.assign_pairs(sequences, delim="_", delim_occurance=-1)))
+                pairs = pair_well(
+                    sequences,
+                    paired_airr_file,
+                    paired_parquet_file,
+                    mode=pairing,
+                    support=support_from_metadata(metadata_df),
+                    min_dominance=min_dominance,
+                    collapse_clonal=collapse_clonal,
+                )
                 if qc:
                     wc["emitted_pairs"] = len(pairs)
                 pairs_printer.set_description_str(f"{len(pairs)} paired sequences")
-                abutils.io.to_airr(pairs, str(paired_airr_file), drop_na_columns=False)
-                abutils.io.to_parquet(
-                    pairs, str(paired_parquet_file), drop_na_columns=False
-                )
+                if pairing == "scored":
+                    contract_frames.append(
+                        contract_frame(paired_parquet_file, well_number(name))
+                    )
 
                 all_pairs += len(pairs)
                 running_total_printer.set_description_str(
@@ -592,6 +635,11 @@ def run(
             # update the main progress bar
             main_pbar.update(1)
 
+    n_contract_pairs = None
+    if pairing == "scored":
+        n_contract_pairs = write_contract_pairs(
+            contract_frames, output_directory / "pairs" / "pairs.parquet"
+        )
     if qc:
         qc_mod.write_qc(
             output_directory, qc_rows, qc_failures, qc_fragments, qc_umis, qc_wells
@@ -603,6 +651,7 @@ def run(
             "valid_barcodes": all_valid_barcodes,
             "consensus_sequences": all_consensus_sequences,
             "pairs": all_pairs,
+            **({"pairs_parquet_rows": n_contract_pairs} if n_contract_pairs is not None else {}),
             **({"barcode_orientation": orientation_counts} if barcode_prefer_exact else {}),
         }
     )
