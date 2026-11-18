@@ -55,6 +55,7 @@ from typing import Iterable
 
 import abutils
 import polars as pl
+from natsort import natsorted
 
 HEAVY_LOCI = ("IGH",)
 LIGHT_LOCI = ("IGK", "IGL")
@@ -275,9 +276,14 @@ def pair_well(
     pseudocount: float = DEFAULT_PSEUDOCOUNT,
     collapse_clonal: bool = True,
 ) -> list:
-    """Pair one well's annotated contigs with the chosen rule and write the paired files."""
+    """
+    Pair one well's annotated contigs with the chosen rule and write the paired files.
+
+    Pairs are written (and returned) in natural barcode order, so the output row order does not
+    depend on the order of ``sequences``.
+    """
     if mode == "exact":
-        pairs = exact_pairs(sequences)
+        pairs = natsorted(exact_pairs(sequences), key=lambda p: p.name)
         # identical to v2-base output
         abutils.io.to_airr(pairs, str(paired_airr_file), drop_na_columns=False)
         abutils.io.to_parquet(pairs, str(paired_parquet_file), drop_na_columns=False)
@@ -285,6 +291,7 @@ def pair_well(
     if mode != "scored":
         raise ValueError(f"unknown pairing mode {mode!r}; expected one of {PAIRING_MODES}")
     pairs, _ = scored_pairs(sequences, support or {}, min_dominance, pseudocount, collapse_clonal)
+    pairs = natsorted(pairs, key=lambda p: p.name)
     write_paired(pairs, paired_airr_file, paired_parquet_file, scored=True)
     return pairs
 

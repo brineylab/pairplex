@@ -31,6 +31,11 @@ Works on a finished per-well PairPlex run (``annotated/*_unpaired.parquet`` + ``
 
 Output rows carry ``well`` (= home well), ``sequence_id:0/1`` and ``sequence:0/1`` so they can be
 scored directly with ``simplex.score``.
+
+Determinism: every tie is broken explicitly (representative contig: most UMIs, then smallest
+``sequence_id``; reciprocal-best candidates: highest confidence, then smallest well, heavy and
+light ``sequence_id``), and the posterior sums run in a fixed order, so the same per-well run
+always gives the same pairs in the same row order.
 """
 
 from __future__ import annotations
@@ -94,7 +99,7 @@ def load_run(run_dir: str | Path, wells: tuple[int, int] | None = None) -> pl.Da
         occ = occ.join(pl.concat(meta), left_on=["sequence_id", "well"], right_on=["name", "well"], how="left")
     else:
         occ = occ.with_columns(pl.lit(None, pl.Int64).alias("umis"))
-    return occ.with_columns(pl.col("umis").fill_null(1).cast(pl.Int64))
+    return occ.with_columns(pl.col("umis").fill_null(1).cast(pl.Int64)).sort("well", "sequence_id")
 
 
 def estimate_leakage(species_wells: pl.DataFrame, n_wells: int, min_umis: int = 6) -> float | None:
@@ -177,10 +182,13 @@ def pair_pooled(
     """
     W = int(n_wells or occ["well"].n_unique())
     # per (species, well): UMIs, and the representative contig there (most UMIs)
-    sw = (occ.sort("umis", descending=True)
+    # representative tie-break: most UMIs, then smallest sequence_id; rows in a fixed order so the
+    # posterior sums below always add up in the same order
+    sw = (occ.sort(["umis", "sequence_id"], descending=[True, False], maintain_order=True)
              .group_by(*SPECIES, "well")
              .agg(pl.col("umis").sum().alias("n"), pl.col("sequence_id").first(), pl.col("sequence").first(),
-                  pl.col("cdr3_aa").first()))
+                  pl.col("cdr3_aa").first())
+             .sort(*SPECIES, "well", nulls_last=True))
     est = leakage is None
     f = estimate_leakage(sw, W) if est else float(leakage)
     if f is None:
@@ -205,7 +213,11 @@ def pair_pooled(
 
     H = side(pl.col("locus") == "IGH", 0)
     L = side(pl.col("locus") != "IGH", 1)
-    cand = H.join(L, on=["barcode", "well"]).with_columns((pl.col("p_home:0") * pl.col("p_home:1")).alias("confidence"))
+    # fixed candidate order: "ordinal" ranks below break equal confidences by this order
+    tie = ["well", "sequence_id:0", "sequence_id:1"]
+    cand = (H.join(L, on=["barcode", "well"])
+             .with_columns((pl.col("p_home:0") * pl.col("p_home:1")).alias("confidence"))
+             .sort(["confidence", *tie], descending=[True, False, False, False]))
     hkey = ["barcode", "locus:0", "v_gene:0", "j_gene:0", "junction:0"]
     lkey = ["barcode", "locus:1", "v_gene:1", "j_gene:1", "junction:1"]
     cand = cand.with_columns(
@@ -219,7 +231,7 @@ def pair_pooled(
                  .drop("_rh", "_rl", "_h2", "_l2")
                  .filter(pl.col("confidence") >= min_confidence)
                  .with_columns(pl.col("barcode").alias("name"))
-                 .sort("confidence", descending=True))
+                 .sort(["confidence", "barcode", *tie], descending=[True, False, False, False, False]))
     info = {"wells": W, "leakage": f, "leakage_estimated": est, "species": int(pooled.height), "pairs": int(pairs.height),
             "ambient_flagged": n_ambient}
     return pairs, info
