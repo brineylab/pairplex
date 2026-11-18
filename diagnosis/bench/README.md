@@ -28,6 +28,7 @@ cat ~/work/PairPlex/bench/runs/NAME/STATUS          # queued / running slotN / D
 - real: clonal purity drops by ≤1 point;
 - runtime: total PairPlex time ≤1.5× baseline.
 - a set identical to the baseline is reported SAME and accepted (neutral by design).
+- a set whose every change stays within the measured run-to-run noise of v2-base is reported SAME~ and accepted (agreed 2026-11-18). Band (see `compare.py` NOISE): sim pooled ±0.002 precision/recall, ±0.1% emitted and conf≥0.9 pairs; real ±0.002 purity, ±0.05% pairs. Sim per-well sets are deterministic and get no band.
 - **lineage retention** (`lineage.py`, printed by `compare.py` for the real memory reactions): baseline expanded clones (heavy V+J+CDRH3 aa, ≥3/5/10 cells), with cells recovered, lineages lost and light coherence. A lost lineage of ≥5 cells is flagged **REVIEW** (listed, not an automatic fail, since baseline clones include ambient pseudo-lineages). The cells-recovered ratio is reported only, until its normal range is known.
 
 ## Contract with branches
@@ -46,7 +47,7 @@ After every merge into `main`, run `bash diagnosis/bench/integration.sh`. It:
 - queues one benchmark `main-<sha7>`;
 - writes `~/work/PairPlex/bench/integration/<sha7>.md`.
 
-Then compare `main-<sha7>` with the previous `main-*` run, or with `v2-base`. A merge that is neutral by design must come out SAME.
+Then compare `main-<sha7>` with the previous `main-*` run, or with `v2-base`. A merge that is neutral by design must come out SAME or SAME~.
 
 ## Files
 - `make_real_subset.py`: builds the real subsets (one-time; `~/work/PairPlex/bench/make_real_subsets.sh`).

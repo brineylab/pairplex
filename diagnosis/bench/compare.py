@@ -6,7 +6,13 @@ Acceptance (agreed 2026-11-17), per comparable pair set:
   * real memory reactions (real_d02, real_d07): clonal purity does not drop by more than 1 point;
   * runtime: total PairPlex seconds <= 1.5 x baseline.
 A set whose metrics are identical to the baseline is reported SAME and accepted (changes that are
-neutral by design, e.g. extra output columns). A branch set "pairs" (out/pairs/pairs.parquet) is compared with the baseline "pooled" set when the
+neutral by design, e.g. extra output columns).
+Noise band (agreed 2026-11-18): v2-base is not deterministic (as_completed chunk order -> clustering/POA
+tie-breaks), so a set whose every change stays within the measured run-to-run noise is reported SAME~
+and accepted. Measured on v2-base reruns (C-v2base-rerun-sim, main-a8b6376, C-support-qc-v1 vs v2-base):
+sim per-well sets were exactly identical (no band: any change there is real); sim pooled sets moved by
+<= 0.0013 precision, <= 0.0009 recall, <= 2 emitted, 0 pairs at conf >= 0.9; real sets by <= 0.0008
+purity and <= 12 pairs (0.02%). Band = about 1.5-2.5x those maxima (NOISE below). A branch set "pairs" (out/pairs/pairs.parquet) is compared with the baseline "pooled" set when the
 baseline has no "pairs".
 
 Usage: python compare.py NAME [--baseline v2-base] [--json]
@@ -20,6 +26,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 RUNS = Path("/home/jovyan/work/PairPlex/bench/runs")
 SETS = ("per_well", "pooled", "pairs")
 TOL = 0.01
+# run-to-run noise band (see docstring); sim per-well sets are deterministic and get no band
+NOISE = {"precision": 0.002, "cell_recall": 0.002, "emitted_rel": 0.001, "emitted_min": 2,
+         "n_conf_rel": 0.001, "n_conf_min": 1, "purity": 0.002, "pairs_rel": 0.0005, "pairs_min": 10}
+
+
+def within(cur, ref, key, abs_tol=None, rel=None, minimum=0):
+    if cur is None or ref is None:
+        return cur == ref
+    tol = abs_tol if abs_tol is not None else max(minimum, rel * abs(ref))
+    return abs(cur - ref) <= tol + 1e-12
+
+
+def sim_noise(cur, ref):
+    return (within(cur["precision"], ref["precision"], "p", NOISE["precision"])
+            and within(cur["cell_recall"], ref["cell_recall"], "r", NOISE["cell_recall"])
+            and within(cur["emitted"], ref["emitted"], "e", rel=NOISE["emitted_rel"], minimum=NOISE["emitted_min"])
+            and within(cur["n_conf0.9"], ref["n_conf0.9"], "c", rel=NOISE["n_conf_rel"], minimum=NOISE["n_conf_min"]))
+
+
+def real_noise(cur, ref):
+    return (within(cur["purity"], ref["purity"], "u", NOISE["purity"])
+            and within(cur["pairs"], ref["pairs"], "n", rel=NOISE["pairs_rel"], minimum=NOISE["pairs_min"]))
 
 
 def load(name):
@@ -70,7 +98,8 @@ def main():
                 if ref["precision"] is not None and cur["precision"] is not None:
                     gain = (cur["cell_recall"] or 0) > (ref["cell_recall"] or 0) or (cur["n_conf0.9"] or 0) > (ref["n_conf0.9"] or 0)
                     same = all(cur[k] == ref[k] for k in ("precision", "cell_recall", "emitted", "n_conf0.9"))
-                    ok = "same" if same else (gain and cur["precision"] >= ref["precision"] - TOL)
+                    ok = "same" if same else ("noise" if s == "pooled" and sim_noise(cur, ref) else
+                                              (gain and cur["precision"] >= ref["precision"] - TOL))
             else:
                 cur = {"purity": g(n, s, "purity"), "pairs": g(n, s, "pairs"), "clones_ge2": g(n, s, "clones_ge2"),
                        "purity_conf0.9": g(n, s + "_by_conf", ">=0.9", "purity"), "n_conf0.9": g(n, s + "_by_conf", ">=0.9", "pairs")}
@@ -79,7 +108,8 @@ def main():
                        "purity_conf0.9": g(b, bs + "_by_conf", ">=0.9", "purity") if bs else None,
                        "n_conf0.9": g(b, bs + "_by_conf", ">=0.9", "pairs") if bs else None}
                 ok = None if ref["purity"] is None or cur["purity"] is None else (
-                    "same" if (cur["purity"], cur["pairs"]) == (ref["purity"], ref["pairs"]) else cur["purity"] >= ref["purity"] - TOL)
+                    "same" if (cur["purity"], cur["pairs"]) == (ref["purity"], ref["pairs"]) else
+                    "noise" if real_noise(cur, ref) else cur["purity"] >= ref["purity"] - TOL)
             rows.append((ds, s, bs, cur, ref, ok))
             if ok is not None:
                 verdicts.append(ok)
@@ -92,12 +122,12 @@ def main():
         return
     print(f"{a.name} vs {a.baseline}")
     for ds, s, bs, cur, ref, ok in rows:
-        mark = {True: "PASS", False: "FAIL", None: "n/a", "same": "SAME"}[ok]
+        mark = {True: "PASS", False: "FAIL", None: "n/a", "same": "SAME", "noise": "SAME~"}[ok]
         print(f"\n[{mark}] {ds} / {s}" + (f" (vs baseline {bs})" if bs != s else ""))
         for k in cur:
             print(f"   {k:<15} {fmt(ref.get(k)):>10} -> {fmt(cur[k]):>10}")
     print(f"\nruntime: {t_base}s -> {t_new}s ({'PASS' if rt_ok else 'FAIL' if rt_ok is False else 'n/a'}, limit 1.5x)")
-    overall = all(v in (True, "same") for v in verdicts) and rt_ok is not False and bool(verdicts)
+    overall = all(v in (True, "same", "noise") for v in verdicts) and rt_ok is not False and bool(verdicts)
     # lineage retention on real memory reactions (report + REVIEW flag, not part of the pass rule)
     try:
         from lineage import SIZES, compare_lineages
