@@ -162,6 +162,19 @@ def version():
     default=True,
     help="Write qc/stage_counts.csv, qc/annotation_failures.csv and qc/report.{json,md}",
 )
+@click.option(
+    "--pooling",
+    type=click.Choice(["per_well", "across_wells"]),
+    default="per_well",
+    help="per_well: process each well on its own. across_wells: pool reads by droplet barcode across wells, "
+    "collapse UMIs across wells and pair by shared home well (writes pairs/pairs.parquet)",
+)
+@click.option(
+    "--crosswell_shards",
+    type=int,
+    default=None,
+    help="across_wells only: number of on-disk barcode shards (default: ~1 per 160 MB of gzipped input)",
+)
 def run(
     sequences: str | Path,
     output_directory: str | Path,
@@ -188,6 +201,8 @@ def run(
     debug: bool,
     support_columns: bool,
     qc: bool,
+    pooling: str,
+    crosswell_shards: int | None,
 ):
     run_pairplex(
         sequences=sequences,
@@ -215,6 +230,8 @@ def run(
         debug=debug,
         support_columns=support_columns,
         qc=qc,
+        pooling=pooling,
+        crosswell_shards=crosswell_shards,
     )
 
 

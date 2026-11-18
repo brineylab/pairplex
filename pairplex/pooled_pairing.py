@@ -103,7 +103,15 @@ def estimate_leakage(species_wells: pl.DataFrame, n_wells: int, min_umis: int = 
     ``species_wells`` has one row per (species, well) with column ``n``.
     """
     tot = species_wells.group_by(SPECIES).agg(pl.col("n").sum().alias("N"), pl.col("n").max().alias("nmax"))
-    big = tot.filter(pl.col("N") >= min_umis)
+    return leakage_from_totals(tot, n_wells, min_umis)
+
+
+def leakage_from_totals(totals: pl.DataFrame, n_wells: int, min_umis: int = 6) -> float | None:
+    """
+    Leakage f from per-species totals (one row per species, columns ``N`` = pooled UMIs and
+    ``nmax`` = UMIs in the modal well). Lets callers aggregate species in batches (e.g. per shard).
+    """
+    big = totals.filter(pl.col("N") >= min_umis)
     if big.height == 0:
         return None
     out = 1 - big["nmax"].sum() / big["N"].sum()
