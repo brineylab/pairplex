@@ -98,6 +98,28 @@ def version():
     default="human",
     help="Germline database for V(D)J assignment",
 )
+@click.option(
+    "--mmseqs_threads",
+    type=click.IntRange(min=1),
+    default=1,
+    help="Threads for MMseqs2 during annotation (always explicit; None made MMseqs2 use every node CPU and crash)",
+)
+@click.option(
+    "--tso_g_max",
+    type=click.IntRange(min=0),
+    default=3,
+    help="Maximum number of Gs stripped after the TSO prefix (the TSO's rGrGrG run); genuine 5' Gs are kept",
+)
+@click.option(
+    "--barcode_prefer_exact/--no-barcode_prefer_exact",
+    default=True,
+    help="Prefer the read orientation with an exact barcode whitelist hit over a Hamming-1 correction in the other",
+)
+@click.option(
+    "--legacy",
+    is_flag=True,
+    help="Reproduce v2-base behaviour exactly (overrides the options of newer fixes)",
+)
 @click.option("--quiet", is_flag=True, help="Whether to suppress output")
 @click.option(
     "--debug",
@@ -117,7 +139,6 @@ def version():
     default=None,
     help="across_wells only: number of on-disk barcode shards (default: ~1 per 160 MB of gzipped input)",
 )
-@click.option("--legacy", is_flag=True, help="Reproduce v2-base behaviour exactly (forces --pooling per_well)")
 def run(
     sequences: str | Path,
     output_directory: str | Path,
@@ -132,11 +153,14 @@ def run(
     merge_paired_reads: bool,
     receptor: str,
     germline_database: str,
+    mmseqs_threads: int,
+    tso_g_max: int,
+    barcode_prefer_exact: bool,
+    legacy: bool,
     quiet: bool,
     debug: bool,
     pooling: str,
     crosswell_shards: int | None,
-    legacy: bool,
 ):
     run_pairplex(
         sequences=sequences,
@@ -152,11 +176,14 @@ def run(
         merge_paired_reads=merge_paired_reads,
         receptor=receptor,
         germline_database=germline_database,
+        mmseqs_threads=mmseqs_threads,
+        tso_g_max=tso_g_max,
+        barcode_prefer_exact=barcode_prefer_exact,
+        legacy=legacy,
         quiet=quiet,
         debug=debug,
         pooling=pooling,
         crosswell_shards=crosswell_shards,
-        legacy=legacy,
     )
 
 
@@ -255,7 +282,7 @@ def make_fastq(
     debug: bool,
 ):
     run_make_fastq(
-        sequencing_folder=sequencing_folder,
+        sequence_dir=sequencing_folder,
         output_directory=output_directory,
         samplesheet=samplesheet,
         platform=platform,

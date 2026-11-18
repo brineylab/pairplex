@@ -49,11 +49,14 @@ def run(
     merge_paired_reads: bool = False,
     receptor: str = "bcr",
     germline_database: str = "human",
+    mmseqs_threads: int = 1,
+    tso_g_max: int = 3,
+    barcode_prefer_exact: bool = True,
+    legacy: bool = False,
     quiet: bool = False,
     debug: bool = False,
     pooling: str = "per_well",
     crosswell_shards: int | None = None,
-    legacy: bool = False,
 ) -> list:
     """
     Run PairPlex.
@@ -108,6 +111,24 @@ def run(
         The germline database to use. Options are anything accepted by `abstar.run`, including
         custom databases if available.
 
+    mmseqs_threads : int
+        Number of threads MMseqs2 uses inside ``abstar.run``. Defaults to ``1``. Always passed explicitly: with
+        ``None`` MMseqs2 uses every online CPU of the node (ignoring ``OMP_NUM_THREADS`` and CPU affinity) and
+        crashes when its thread count exceeds the size of an abstar sub-query batch. Annotation is not the
+        bottleneck of a run, so ``1`` costs little. Does not change results.
+
+    tso_g_max : int
+        Maximum number of Gs removed from the start of the insert, after the fixed TSO prefix
+        ``TTTCTTATAT`` (read positions 26-35). The 10x TSO ends in rGrGrG, so the default is ``3``;
+        genuine 5' Gs of the transcript beyond the TSO's run are kept. v2-base removed every leading
+        G (``lstrip("G")``).
+
+    barcode_prefer_exact : bool
+        Read orientation choice. If ``True`` (default), an exact barcode whitelist hit in either orientation
+        (forward or reverse complement) wins over a Hamming-1 correction in the other; corrections are used only
+        when neither orientation is exact. Ties keep the forward orientation. Orientation counts are written to
+        the run log (``stats.barcode_orientation``). v2-base took the first orientation whose barcode corrected.
+
     quiet : bool
         Whether to suppress the progress bar and other update messages.
 
@@ -132,7 +153,8 @@ def run(
         ``None`` picks about one shard per 160 MB of gzipped input (~1M reads).
 
     legacy : bool
-        If ``True``, reproduce ``v2-base`` behaviour exactly: forces ``pooling="per_well"``.
+        If ``True``, reproduce v2-base exactly: forces ``tso_g_max`` to strip every leading G
+        (``lstrip("G")``), ``barcode_prefer_exact=False`` and ``pooling="per_well"``.
 
 
     Returns
@@ -142,6 +164,14 @@ def run(
 
     """
     parameters = dict(locals())  # captured first: exactly the arguments of this call
+    if not isinstance(mmseqs_threads, int) or mmseqs_threads < 1:
+        raise ValueError(f"mmseqs_threads must be a positive integer, got {mmseqs_threads!r}")
+    if legacy:
+        tso_g_max = None  # v2-base: lstrip("G")
+        barcode_prefer_exact = False  # v2-base: first orientation that corrects
+    elif not isinstance(tso_g_max, int) or tso_g_max < 0:
+        raise ValueError(f"tso_g_max must be a non-negative integer, got {tso_g_max!r}")
+
     if legacy:
         pooling = "per_well"
     if pooling not in ("per_well", "across_wells"):
@@ -246,6 +276,9 @@ def run(
             n_shards=crosswell_shards,
             quiet=quiet,
             debug=debug,
+            tso_g_max=tso_g_max,
+            barcode_prefer_exact=barcode_prefer_exact,
+            mmseqs_threads=mmseqs_threads,
         )
         return
 
@@ -262,6 +295,7 @@ def run(
     running_total_printer = tqdm(total=0, bar_format="{desc}", position=2, leave=True)
     blank2_printer = tqdm(total=0, bar_format=" ", position=3, leave=True)
     all_valid_barcodes = 0
+    orientation_counts = {}
     all_consensus_sequences = 0
     all_pairs = 0
     running_total_printer.set_description_str(
@@ -323,14 +357,21 @@ def run(
 
             main_pbar.set_postfix_str("parsing barcodes", refresh=True)
             parquet_chunks = []
+            parse_kwargs = {"whitelist_path": whitelist_path, "tso_g_max": tso_g_max}
+            if barcode_prefer_exact:
+                parse_kwargs.update(prefer_exact=True, return_counts=True)
+            else:
+                parse_kwargs.update(prefer_exact=False)
             futures = [
-                executor.submit(
-                    parse_barcodes, chunk, temp_directory, whitelist_path=whitelist_path
-                )
+                executor.submit(parse_barcodes, chunk, temp_directory, **parse_kwargs)
                 for chunk in fastq_chunks
             ]
             for future in as_completed(futures):
                 res = future.result()
+                if barcode_prefer_exact:
+                    res, counts = res
+                    for k, v in counts.items():
+                        orientation_counts[k] = orientation_counts.get(k, 0) + v
                 if res is not None:
                     parquet_chunks.append(res)
             to_delete.extend(parquet_chunks)
@@ -459,12 +500,8 @@ def run(
             # failsafe for empty consensus files
             if consensus_count <= 1 or os.path.getsize(consensus_file) == 0: # Changed consensus_count to include 1 (a single sequence can't be paired)
                 continue
-            # guard against MMSeqs threading issues with small datasets
             consensus_count = filtered_df.shape[0]
-            mmseqs_threads = None
-            if consensus_count < 1000:
-                mmseqs_threads = 1
-            # run abstar
+            # run abstar (always with an explicit MMseqs2 thread count, see docstring)
             sequences = abstar.run(
                 sequences=str(consensus_file),
                 germline_database=germline_database,
@@ -537,6 +574,7 @@ def run(
             "valid_barcodes": all_valid_barcodes,
             "consensus_sequences": all_consensus_sequences,
             "pairs": all_pairs,
+            **({"barcode_orientation": orientation_counts} if barcode_prefer_exact else {}),
         }
     )
 

@@ -177,9 +177,9 @@ def run(
                 annotation_printer = tqdm(
                     total=0, bar_format="{desc}", position=5, leave=False
                 )
-                mmseqs_threads = None
-                if input_count < 1000:
-                    mmseqs_threads = 1
+                # always an explicit thread count: with None, MMseqs2 uses every online
+                # node CPU and crashes when that exceeds an abstar sub-query batch
+                mmseqs_threads = 1
                 # run abstar
                 annotation_printer.set_description_str("annotating with abstar...")
                 sequences = abstar.run(

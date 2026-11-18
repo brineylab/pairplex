@@ -26,7 +26,7 @@ Pipeline
      POA consensus per cluster (as legacy);
    - inside each contig, assign each molecule to the well holding most of its reads (ties: lowest
      well number); reads in other wells are counted as hopped. ``n_w`` = molecules assigned to w.
-3. Annotate passing contigs per shard with ``abstar.run`` (``mmseqs_threads=1``).
+3. Annotate passing contigs per shard with ``abstar.run`` (explicit ``mmseqs_threads``, default 1).
 4. Estimate the leakage f over the whole reaction, then pair each shard with
    :func:`pairplex.pooled_pairing.pair_pooled` on the per-contig ``n_w`` (home-well posterior,
    reciprocal best pairs, confidence and margin).
@@ -143,6 +143,7 @@ def parse_to_shards(
     executor: ProcessPoolExecutor,
     temp_directory: Path,
     whitelist_path: str | Path | None = None,
+    parse_kwargs: dict | None = None,
     chunk_reads: int = PARSE_CHUNK_READS,
     max_in_flight: int = MAX_READS_IN_FLIGHT,
     flush_reads: int = FLUSH_READS,
@@ -188,7 +189,7 @@ def parse_to_shards(
         for c in chunks:
             n = _count_reads(c)
             stats["input_reads"] += n
-            pending[executor.submit(parse_barcodes, c, sub / "parsed", whitelist_path=whitelist_path)] = (well, c, n)
+            pending[executor.submit(parse_barcodes, c, sub / "parsed", whitelist_path=whitelist_path, **(parse_kwargs or {}))] = (well, c, n)
             while sum(v[2] for v in pending.values()) > max_in_flight:
                 done, _ = wait(list(pending), return_when=FIRST_COMPLETED)
                 collect(done)
@@ -321,8 +322,9 @@ def process_droplet_crosswell(
 _ANN_KEEP = ["sequence_id", "locus", "productive", "v_gene", "j_gene", "junction", "cdr3_aa", "sequence"]
 
 
-def annotate_contigs(contigs: pl.DataFrame, fasta: Path, germline_database: str, receptor: str) -> pl.DataFrame | None:
-    """Annotate passing contig consensus sequences with abstar (``mmseqs_threads=1``)."""
+def annotate_contigs(contigs: pl.DataFrame, fasta: Path, germline_database: str, receptor: str,
+                     mmseqs_threads: int = 1) -> pl.DataFrame | None:
+    """Annotate passing contig consensus sequences with abstar (explicit ``mmseqs_threads``, default 1)."""
     ok = contigs.filter(pl.col("pass_filters"))
     if ok.height == 0:
         return None
@@ -330,7 +332,7 @@ def annotate_contigs(contigs: pl.DataFrame, fasta: Path, germline_database: str,
         for n, s in zip(ok["name"], ok["consensus"]):
             f.write(f">{n}\n{s}\n")
     ann = abstar.run(sequences=str(fasta), germline_database=germline_database, receptor=receptor,
-                     mmseqs_threads=1, n_processes=available_cpus(), as_dataframe=True)
+                     mmseqs_threads=mmseqs_threads, n_processes=available_cpus(), as_dataframe=True)
     os.remove(fasta)
     if ann is None or ann.height == 0:
         return None
@@ -385,6 +387,9 @@ def run_crosswell(
     n_shards: int | None = None,
     quiet: bool = False,
     debug: bool = False,
+    tso_g_max: int | None = 3,
+    barcode_prefer_exact: bool = True,
+    mmseqs_threads: int = 1,
 ) -> dict:
     """Run the cross-well pipeline (see module docstring) and finish ``run_log`` with its stats."""
     t0 = time.time()
@@ -412,7 +417,8 @@ def run_crosswell(
         # 1-2. parse and shard
         writer = ShardWriter(shard_dir, n_shards)
         try:
-            pstats = parse_to_shards(input_files, writer, ex, work, whitelist_path)
+            pstats = parse_to_shards(input_files, writer, ex, work, whitelist_path,
+                                     parse_kwargs={"tso_g_max": tso_g_max, "prefer_exact": barcode_prefer_exact})
         finally:
             shards = writer.close()
         W = len(pstats["wells"])
@@ -441,7 +447,7 @@ def run_crosswell(
             cdf = pl.DataFrame(contigs)
             wdf = pl.DataFrame(cwells, schema={"name": pl.String, "well": pl.Int64, "umis": pl.Int64,
                                                "reads": pl.Int64, "umis_present": pl.Int64})
-            ann = annotate_contigs(cdf, ann_dir / f"shard{i:04d}.fasta", germline_database, receptor)
+            ann = annotate_contigs(cdf, ann_dir / f"shard{i:04d}.fasta", germline_database, receptor, mmseqs_threads)
             if ann is not None:
                 cdf = cdf.join(ann.rename({c: f"{c}_contig" for c in ann.columns if c in cdf.columns and c != "sequence_id"}),
                                left_on="name", right_on="sequence_id", how="left", coalesce=False)
