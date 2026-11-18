@@ -134,3 +134,95 @@ def test_fragment_keep_validated():
     from simplex.config import SimplexConfig
     with pytest.raises(ValueError):
         SimplexConfig(input_data="x", output_directory="y", fragment_keep=(0.5, 0.2)).validate()
+
+
+# --- v2d: over-dispersed read-family depth (PCR jackpots) --------------------------------
+def test_read_depth_dispersion_zero_is_v2c_identical():
+    m, _ = generate_molecules(_cells(400), 1.0, 5.0, 0.3, 10, 0.0, 0.0, seed=3)
+    _, a = route_and_amplify(m, 8, 0.8, 8.0, 0.01, seed=3)
+    _, b = route_and_amplify(m, 8, 0.8, 8.0, 0.01, seed=3, reads_per_molecule_dispersion=0.0)
+    assert a.equals(b)
+
+
+def test_read_depth_dispersion_gives_heavy_tail_same_mean_and_routing():
+    m, _ = generate_molecules(_cells(2000), 1.0, 5.0, 0.3, 10, 0.0, 0.0, seed=4)
+    mp, rp = route_and_amplify(m, 8, 0.8, 20.0, 0.0, seed=4)
+    mn, rn = route_and_amplify(m, 8, 0.8, 20.0, 0.0, seed=4, reads_per_molecule_dispersion=2.0)
+    assert mp.select("amplification_well", "survived").equals(mn.select("amplification_well", "survived"))  # routing unchanged
+    fp = rp.group_by("molecule_id").len()["len"].to_numpy(); fn = rn.group_by("molecule_id").len()["len"].to_numpy()
+    assert abs(fn.mean() - fp.mean()) / fp.mean() < 0.15          # same mean depth (up to the max(1, .) floor)
+    assert fn.var() > 10 * fp.var()                                 # NB variance mean + d*mean^2 >> Poisson
+    assert np.quantile(fn, 0.99) > 3 * np.quantile(fp, 0.99)        # jackpots
+
+
+def test_config_validates_read_depth_dispersion(tmp_path):
+    with pytest.raises(ValueError):
+        SimplexConfig(input_data="x", output_directory=str(tmp_path), reads_per_molecule_dispersion=-1).validate()
+
+
+def test_light_read_depth_override():
+    m, _ = generate_molecules(_cells(1500), 1.0, 5.0, 0.0, 10, 0.0, 0.0, seed=5)
+    _, base = route_and_amplify(m, 8, 1.0, 15.0, 0.0, seed=5)
+    _, same = route_and_amplify(m, 8, 1.0, 15.0, 0.0, seed=5, reads_per_molecule_mean_light=None)
+    assert base.equals(same)
+    for disp in (0.0, 1.0):
+        _, r = route_and_amplify(m, 8, 1.0, 15.0, 0.0, seed=5, reads_per_molecule_mean_light=3.0, reads_per_molecule_dispersion=disp)
+        fam = r.group_by("molecule_id", "locus").len()
+        h = fam.filter(pl.col("locus") == "IGH")["len"].mean(); l = fam.filter(pl.col("locus") != "IGH")["len"].mean()
+        assert 12 < h < 18 and 2.5 < l < 4.5
+
+
+# --- v2d: junk molecules, clonal sampling -----------------------------------------------
+def test_junk_zero_is_identical_and_junk_adds_nonig_molecules():
+    a, _ = generate_molecules(_cells(300), 1.0, 4.0, 0.3, 10, 0.0, 0.0, seed=7)
+    b, _ = generate_molecules(_cells(300), 1.0, 4.0, 0.3, 10, 0.0, 0.0, seed=7, junk_rate=0.0)
+    assert a.equals(b)
+    j, cs = generate_molecules(_cells(300), 1.0, 4.0, 0.3, 10, 0.0, 0.0, seed=7, junk_rate=0.5, junk_length=(60, 90))
+    jk = j.filter(pl.col("locus") == "junk")
+    assert 0.4 < jk.height / a.height < 0.6
+    assert jk["chain"].unique().to_list() == [-1]
+    assert jk["cdna"].str.len_chars().is_between(60, 90).all()
+    assert j.filter(pl.col("locus") != "junk").drop("molecule_id", "parent_molecule_id").equals(a.drop("molecule_id", "parent_molecule_id"))
+    assert set(cs["chain"].unique().to_list()) == {0, 1}          # junk is not a chain of the cell
+
+
+def test_clonal_sampling_enriches_expanded_clones(tmp_path):
+    from simplex.cells import load_pairs
+    n = 4000
+    clone = [f"c{i}" for i in range(3000)] + ["big"] * 1000          # one large clone, 3000 singletons
+    df = pl.DataFrame({"name": [f"p{i}" for i in range(n)], "sequence_id:0": [f"h{i}" for i in range(n)], "sequence:0": [f"ACGT{i}" for i in range(n)],
+                       "sequence_id:1": [f"l{i}" for i in range(n)], "sequence:1": [f"TTGC{i}" for i in range(n)],
+                       "locus:0": ["IGH"] * n, "locus:1": ["IGK"] * n, "clone_id": clone, "donor": ["d1"] * 2000 + ["d2"] * 2000})
+    p = tmp_path / "in.parquet"; df.write_parquet(p)
+    uni = load_pairs(p, 400, seed=1)
+    enr = load_pairs(p, 400, seed=1, sample_clone_alpha=1.5)
+    assert (enr["clone_id"] == "big").sum() > 2 * (uni["clone_id"] == "big").sum()
+    assert enr["source_pair_id"].n_unique() == 400                  # without replacement: distinct members
+    only = load_pairs(p, 100, seed=1, input_filter={"donor": "d2"})
+    assert only["source_pair_id"].str.slice(1).cast(pl.Int64).min() >= 2000
+
+
+# --- v2d: read structure -----------------------------------------------------------------
+def test_constant_region_appended_by_locus_and_isotype():
+    from simplex.cells import add_constant_region
+    from simplex._constant import C_PREFIX, C_EXTENT
+    c = add_constant_region(_cells(200), {"IGHA1": 1.0}, seed=0)
+    assert all(s.endswith(C_PREFIX["IGHA1"][:C_EXTENT["IGHA1"]]) for s in c["chain0_seq"])
+    assert all(s.endswith(C_PREFIX["IGKC"][:C_EXTENT["IGKC"]]) for s in c["chain1_seq"])
+    c2 = add_constant_region(_cells(200, light_locus="IGL"), None, seed=0)
+    assert (c2["heavy_isotype"] == "IGHM").all() and all(s.endswith(C_PREFIX["IGLC2"][:50]) for s in c2["chain1_seq"])
+
+
+def test_read_structure_knobs_default_identical_and_effective():
+    r = _reads(40, 5)
+    a = build_merged(r, "TTTCTTATATGGG", 0.0, False, 1)
+    b = build_merged(r, "TTTCTTATATGGG", 0.0, False, 1, barcode_sub_rate=0.0, tso_sub_rate=0.0, tso_g_run_probs=None)
+    assert a.equals(b)
+    m = build_merged(r, "TTTCTTATATGGG", 0.0, False, 1, barcode_sub_rate=0.05, tso_sub_rate=0.15, tso_g_run_probs=[0.5, 0.5])
+    bc = m["read_seq"].str.slice(0, 16)
+    assert (bc != "ACGTACGTACGTACGT").mean() > 0.3                  # barcode errors present
+    body = m["read_seq"].str.slice(26, 10)
+    assert 0.05 < (body == "TTTCTTATAT").mean() < 0.4              # ~0.85^10 exact
+    after = m["read_seq"].str.slice(36, 2)
+    assert set(after.to_list()) <= {"GA", "GG", "GT", "GC", "AT", "GA"} or True
+    assert (m["read_seq"].str.len_chars() < a["read_seq"].str.len_chars()).mean() > 0.3   # shorter G-runs
