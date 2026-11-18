@@ -116,6 +116,32 @@ def version():
     help="Prefer the read orientation with an exact barcode whitelist hit over a Hamming-1 correction in the other",
 )
 @click.option(
+    "--umi-collapse",
+    "umi_collapse",
+    type=click.Choice(["directional", "none"]),
+    default="directional",
+    help="UMI error correction within each (well, barcode): UMI-tools directional (default) or none",
+)
+@click.option(
+    "--pairing",
+    type=click.Choice(["scored", "exact"]),
+    default="scored",
+    help="Per-well pairing rule: 'scored' resolves multi-chain barcodes by UMI dominance and scores each pair; 'exact' keeps only 1 heavy + 1 light barcodes (v2-base)",
+)
+@click.option(
+    "--min-dominance",
+    "min_dominance",
+    type=float,
+    default=2.0,
+    help="Scored pairing: top chain of each locus group needs >= this many times the UMIs of the second-best chain",
+)
+@click.option(
+    "--collapse-clonal/--no-collapse-clonal",
+    "collapse_clonal",
+    default=True,
+    help="Scored pairing: merge same-locus contigs sharing V, J and CDR3 aa before ranking",
+)
+@click.option(
     "--legacy",
     is_flag=True,
     help="Reproduce v2-base behaviour exactly (overrides the options of newer fixes)",
@@ -125,6 +151,16 @@ def version():
     "--debug",
     is_flag=True,
     help="Whether to enable debug mode, which saves all temporary files to ease troubleshooting",
+)
+@click.option(
+    "--support_columns/--no_support_columns",
+    default=True,
+    help="Carry cluster support (umis, reads, cluster_fraction) into the annotated outputs",
+)
+@click.option(
+    "--qc/--no_qc",
+    default=True,
+    help="Write qc/stage_counts.csv, qc/annotation_failures.csv and qc/report.{json,md}",
 )
 @click.option(
     "--pooling",
@@ -156,9 +192,15 @@ def run(
     mmseqs_threads: int,
     tso_g_max: int,
     barcode_prefer_exact: bool,
+    umi_collapse: str,
+    pairing: str,
+    min_dominance: float,
+    collapse_clonal: bool,
     legacy: bool,
     quiet: bool,
     debug: bool,
+    support_columns: bool,
+    qc: bool,
     pooling: str,
     crosswell_shards: int | None,
 ):
@@ -179,9 +221,15 @@ def run(
         mmseqs_threads=mmseqs_threads,
         tso_g_max=tso_g_max,
         barcode_prefer_exact=barcode_prefer_exact,
+        umi_collapse=umi_collapse,
+        pairing=pairing,
+        min_dominance=min_dominance,
+        collapse_clonal=collapse_clonal,
         legacy=legacy,
         quiet=quiet,
         debug=debug,
+        support_columns=support_columns,
+        qc=qc,
         pooling=pooling,
         crosswell_shards=crosswell_shards,
     )
