@@ -9,9 +9,11 @@
 #     REF       branch, tag or commit in ~/work/Software/pairplex (local refs, then origin/REF)
 #     NAME      run name -> ~/work/PairPlex/bench/runs/NAME/
 #     KWARGS    JSON passed to pairplex.pairplex.run (default {}), or @path to a JSON file
-#     DATASETS  comma list from: sim_cal,sim_imp,real_d02,real_d07 (default: all)
+#     DATASETS  comma list from: v2d_mem_p50,v2d_mem_p10,v2d_mem_p90,v2d_nai_p50 (SimPlex v2d, frozen 2026-11-18),
+#               sim_cal,sim_imp (SimPlex v2c, kept for continuity), real_d02,real_d07
+#               (default: the 4 v2d sims + 2 real)
 set -uo pipefail
-REF=$1; NAME=$2; KWARGS=${3:-"{}"}; DATASETS=${4:-sim_cal,sim_imp,real_d02,real_d07}
+REF=$1; NAME=$2; KWARGS=${3:-"{}"}; DATASETS=${4:-v2d_mem_p50,v2d_mem_p10,v2d_mem_p90,v2d_nai_p50,real_d02,real_d07}
 [[ $KWARGS == @* ]] && KWARGS=$(cat "${KWARGS#@}")   # @file form (used by submit.sh)
 REPO=/home/jovyan/work/Software/pairplex
 HARNESS=$REPO/diagnosis/bench          # scoring code: the diagnosis checkout
@@ -55,9 +57,11 @@ EOF
 export PAIRPLEX_MAX_WORKERS=15 OMP_NUM_THREADS=2 POLARS_MAX_THREADS=2 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 run_one() {
   local ds=$1 reads kind truth=""
+  local V2D=/home/jovyan/work/PairPlex/diagnosis/results/simplex_v2d_20k96
   case $ds in
     sim_cal)  reads=$SIM/calibrated/sim/reads;        truth=$SIM/calibrated/sim/truth;        kind=sim ;;
     sim_imp)  reads=$SIM/improved_protocol/sim/reads; truth=$SIM/improved_protocol/sim/truth; kind=sim ;;
+    v2d_*)    reads=$V2D/${ds#v2d_}/sim/reads; truth=$V2D/${ds#v2d_}/sim/truth; kind=sim ;;
     real_d02) reads=$REAL/donor02_memory; kind=real ;;
     real_d07) reads=$REAL/donor07_memory; kind=real ;;
     *) echo "unknown dataset $ds"; return 1 ;;
