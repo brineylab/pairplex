@@ -14,7 +14,7 @@ _MOL_SCHEMA={"molecule_id":pl.Int64,"parent_molecule_id":pl.Int64,"origin_cell_i
     "survived":pl.Boolean,"cdna":pl.Utf8,"is_ambient":pl.Boolean}
 def generate_molecules(cells,recovery_rate,molecules_per_chain_mean,release_rate,umi_length,rt_sub_rate,rt_indel_rate,seed,
                        release_rate_heavy=None,release_rate_light=None,molecules_per_chain_mean_light=None,
-                       ambient_rate=0.0,junk_rate=0.0,junk_length=(80,300)):
+                       ambient_rate=0.0,junk_rate=0.0,junk_length=(80,300),expression_sigma=0.0):
     """Simulate RT capture per cell/chain and split molecules into resident vs free (ambient).
 
     For each chain (0, 1) independently: each cell captures the chain with probability
@@ -43,6 +43,10 @@ def generate_molecules(cells,recovery_rate,molecules_per_chain_mean,release_rate
     and is free (`is_free=True`, routed to a random well) with `is_ambient=True`. Unlike release,
     ambient ADDS molecules and moves a chain to a different barcode.
 
+    Expression heterogeneity (`expression_sigma`, default 0): each cell's molecule means (both chains) are scaled by
+    a mean-1 lognormal factor `exp(sigma*Z - sigma**2/2)` drawn from its own `"expression"` RNG stream, so a few
+    high-expressing cells (plasmablast-like) own most molecules, and therefore most ambient copies.
+
     Junk axis (`junk_rate`, default 0): non-Ig library molecules (mispriming, primer artefacts) with a valid barcode.
     `Poisson(junk_rate * n_cell_molecules)` molecules, each owned by the cell of a uniformly chosen cell molecule
     (barcode, home well), random sequence of uniform length in `junk_length`, released like that cell's chains at
@@ -55,12 +59,14 @@ def generate_molecules(cells,recovery_rate,molecules_per_chain_mean,release_rate
     is one row per `(cell_id, chain)` with `captured`/`n_molecules`, used by `truth.build_truth_cells`.
     """
     rng=rng_for(seed,"molecules"); n=cells.height; frames=[]; status=[]
+    expr=(np.exp(expression_sigma*rng_for(seed,"expression").standard_normal(n)-expression_sigma**2/2)
+          if expression_sigma>0 else np.ones(n))
     def _is_light(chain):
         return cells[f"chain{chain}_locus"].is_in(["IGK","IGL"]).to_numpy() if n else np.array([],bool)
     for chain in (0,1):
         light=_is_light(chain)
         mean=np.where(light, molecules_per_chain_mean if molecules_per_chain_mean_light is None else molecules_per_chain_mean_light,
-                      molecules_per_chain_mean)
+                      molecules_per_chain_mean)*expr
         captured=rng.random(n)<recovery_rate
         nmol=np.where(captured,np.maximum(rng.poisson(mean),1),0).astype(np.int64)
         status.append(pl.DataFrame({"cell_id":cells["cell_id"],"chain":np.full(n,chain,np.int8),"captured":captured,"n_molecules":nmol}))

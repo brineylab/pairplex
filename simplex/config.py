@@ -54,7 +54,9 @@ class SimplexConfig:
       in OTHER droplets (new barcode + UMI, random well), as `ambient_rate` x cell molecules;
       `umi_sub_rate` adds per-read UMI substitution errors (uncorrected UMIs inflate support);
       `reads_per_molecule_dispersion` makes read-family depth negative binomial (PCR jackpots; 0 = Poisson);
-      `reads_per_molecule_mean_light` sets a separate read-family mean for light chains.
+      `reads_per_molecule_mean_light` sets a separate read-family mean for light chains;
+      `expression_sigma` scales each cell's molecule means by a mean-1 lognormal factor (expression heterogeneity:
+      a few plasmablast-like cells own most molecules, hence most ambient copies).
     - **Bookkeeping**: `write_read_truth` (also persist a per-read truth parquet —
       expensive, off by default), `seed` (root seed for all per-stage RNG streams).
     """
@@ -89,6 +91,7 @@ class SimplexConfig:
     tso_sub_rate: float = 0.0
     tso_g_run_probs: list | None = None
     tso_indel_rate: float = 0.0
+    expression_sigma: float = 0.0
 
     _RATES=("recovery_rate","release_rate","molecule_survival_rate","rt_sub_rate","rt_indel_rate",
             "sequencing_sub_rate","sequencing_indel_rate","index_hop_rate","rc_fraction","umi_sub_rate")
@@ -139,6 +142,7 @@ class SimplexConfig:
         if self.ambient_rate<0: raise ValueError("ambient_rate must be >= 0")
         if self.reads_per_molecule_dispersion<0: raise ValueError("reads_per_molecule_dispersion must be >= 0")
         if self.junk_rate<0: raise ValueError("junk_rate must be >= 0")
+        if self.expression_sigma<0: raise ValueError("expression_sigma must be >= 0")
         for r in ("barcode_sub_rate","tso_sub_rate","tso_indel_rate"):
             if not (0.0<=getattr(self,r)<=1.0): raise ValueError(f"{r} not in [0,1]")
         jl,jh=self.junk_length
